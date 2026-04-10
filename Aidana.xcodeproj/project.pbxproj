@@ -1,0 +1,517 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 56;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		602709DB37BDC4149A0815C7 /* StatusBarController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2359911BA86E42842D4DCEBA /* StatusBarController.swift */; };
+		84726EB62F81A8E300A02972 /* FluidAudio in Frameworks */ = {isa = PBXBuildFile; productRef = 84726EB52F81A8E300A02972 /* FluidAudio */; };
+		8BF338BC2E9AC61100FF9F32 /* AidanaApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8BF338BB2E9AC61100FF9F32 /* AidanaApp.swift */; };
+		8BF338C02E9AC61300FF9F32 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 8BF338BF2E9AC61300FF9F32 /* Assets.xcassets */; };
+		8BF338C32E9AC61300FF9F32 /* Preview Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 8BF338C22E9AC61300FF9F32 /* Preview Assets.xcassets */; };
+		A1D90C532ABD05BF008F00A1 /* PreferencesStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1D90C522ABD05BF008F00A1 /* PreferencesStore.swift */; };
+		A1D90C552ABD08B4008F00A1 /* PreferencesView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1D90C542ABD08B4008F00A1 /* PreferencesView.swift */; };
+		AAE0D7C72EA3210000010013 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = AAE0D7C62EA3210000010012 /* AppDelegate.swift */; };
+		AA0000010000000000200001 /* AIServer.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000010000000000100001 /* AIServer.swift */; };			AA000001000000000020000A /* TTSServer.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA000001000000000010000A /* TTSServer.swift */; };		AA0000010000000000200002 /* ASRWebSocketHandler.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000010000000000100002 /* ASRWebSocketHandler.swift */; };
+		AA0000010000000000200004 /* ModelManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000010000000000100004 /* ModelManager.swift */; };
+		AA0000010000000000200005 /* ServerState.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000010000000000100005 /* ServerState.swift */; };
+		AA0000010000000000200006 /* LogStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000010000000000100006 /* LogStore.swift */; };
+		AA0000010000000000200007 /* LogView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000010000000000100007 /* LogView.swift */; };
+		AA0000010000000000200008 /* ASRTestClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000010000000000100008 /* ASRTestClient.swift */; };
+		AA0000010000000000200009 /* reference.wav in Resources */ = {isa = PBXBuildFile; fileRef = AA0000010000000000100009 /* reference.wav */; };
+		AA0000010000000000600001 /* Hummingbird in Frameworks */ = {isa = PBXBuildFile; productRef = AA0000010000000000500001 /* Hummingbird */; };
+		AA0000010000000000600002 /* HummingbirdWebSocket in Frameworks */ = {isa = PBXBuildFile; productRef = AA0000010000000000500002 /* HummingbirdWebSocket */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		2359911BA86E42842D4DCEBA /* StatusBarController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StatusBarController.swift; sourceTree = "<group>"; };
+		8BF338B82E9AC61100FF9F32 /* Aidana.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Aidana.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		8BF338BB2E9AC61100FF9F32 /* AidanaApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AidanaApp.swift; sourceTree = "<group>"; };
+		8BF338BF2E9AC61300FF9F32 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		8BF338C22E9AC61300FF9F32 /* Preview Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = "Preview Assets.xcassets"; sourceTree = "<group>"; };
+		8BF338C42E9AC61300FF9F32 /* Aidana.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = Aidana.entitlements; sourceTree = "<group>"; };
+		A1D90C522ABD05BF008F00A1 /* PreferencesStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PreferencesStore.swift; sourceTree = "<group>"; };
+		A1D90C542ABD08B4008F00A1 /* PreferencesView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PreferencesView.swift; sourceTree = "<group>"; };
+		AAE0D7C62EA3210000010012 /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
+		AA0000010000000000100001 /* AIServer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIServer.swift; sourceTree = "<group>"; };			AA000001000000000010000A /* TTSServer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TTSServer.swift; sourceTree = "<group>"; };		AA0000010000000000100002 /* ASRWebSocketHandler.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ASRWebSocketHandler.swift; sourceTree = "<group>"; };
+		AA0000010000000000100004 /* ModelManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModelManager.swift; sourceTree = "<group>"; };
+		AA0000010000000000100005 /* ServerState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServerState.swift; sourceTree = "<group>"; };
+		AA0000010000000000100006 /* LogStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LogStore.swift; sourceTree = "<group>"; };
+		AA0000010000000000100007 /* LogView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LogView.swift; sourceTree = "<group>"; };
+		AA0000010000000000100008 /* ASRTestClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ASRTestClient.swift; sourceTree = "<group>"; };
+		AA0000010000000000100009 /* reference.wav */ = {isa = PBXFileReference; lastKnownFileType = audio.wav; path = ../reference.wav; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		8BF338B52E9AC61100FF9F32 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				84726EB62F81A8E300A02972 /* FluidAudio in Frameworks */,
+				AA0000010000000000600001 /* Hummingbird in Frameworks */,
+				AA0000010000000000600002 /* HummingbirdWebSocket in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		8BF338AF2E9AC61100FF9F32 = {
+			isa = PBXGroup;
+			children = (
+				8BF338BA2E9AC61100FF9F32 /* Aidana */,
+				8BF338B92E9AC61100FF9F32 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		8BF338B92E9AC61100FF9F32 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				8BF338B82E9AC61100FF9F32 /* Aidana.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		8BF338BA2E9AC61100FF9F32 /* Aidana */ = {
+			isa = PBXGroup;
+			children = (
+				AAE0D7B52EA3210000010001 /* Application */,
+				AA0000010000000000300001 /* Server */,
+				AA0000010000000000300002 /* Support */,
+				AAE0D7B92EA3210000010005 /* Preferences */,
+				AAE0D7BB2EA3210000010007 /* UI */,
+				8BF338BF2E9AC61300FF9F32 /* Assets.xcassets */,
+				8BF338C42E9AC61300FF9F32 /* Aidana.entitlements */,
+				8BF338C12E9AC61300FF9F32 /* Preview Content */,
+				AA0000010000000000100009 /* reference.wav */,
+			);
+			path = Aidana;
+			sourceTree = "<group>";
+		};
+		8BF338C12E9AC61300FF9F32 /* Preview Content */ = {
+			isa = PBXGroup;
+			children = (
+				8BF338C22E9AC61300FF9F32 /* Preview Assets.xcassets */,
+			);
+			path = "Preview Content";
+			sourceTree = "<group>";
+		};
+		AAE0D7B52EA3210000010001 /* Application */ = {
+			isa = PBXGroup;
+			children = (
+				AAE0D7C62EA3210000010012 /* AppDelegate.swift */,
+				8BF338BB2E9AC61100FF9F32 /* AidanaApp.swift */,
+			);
+			path = Application;
+			sourceTree = "<group>";
+		};
+		AA0000010000000000300001 /* Server */ = {
+			isa = PBXGroup;
+			children = (
+				AA0000010000000000100001 /* AIServer.swift */,
+				AA0000010000000000100002 /* ASRWebSocketHandler.swift */,
+				AA0000010000000000100004 /* ModelManager.swift */,
+				AA0000010000000000100005 /* ServerState.swift */,
+				AA000001000000000010000A /* TTSServer.swift */,
+			);
+			path = Server;
+			sourceTree = "<group>";
+		};
+		AAE0D7B92EA3210000010005 /* Preferences */ = {
+			isa = PBXGroup;
+			children = (
+				A1D90C522ABD05BF008F00A1 /* PreferencesStore.swift */,
+			);
+			path = Preferences;
+			sourceTree = "<group>";
+		};
+		AAE0D7BB2EA3210000010007 /* UI */ = {
+			isa = PBXGroup;
+			children = (
+				AAE0D7BD2EA3210000010009 /* MenuBar */,
+				AAE0D7BF2EA321000001000B /* Preferences */,
+				AA0000010000000000100007 /* LogView.swift */,
+			);
+			path = UI;
+			sourceTree = "<group>";
+		};
+		AAE0D7BD2EA3210000010009 /* MenuBar */ = {
+			isa = PBXGroup;
+			children = (
+				2359911BA86E42842D4DCEBA /* StatusBarController.swift */,
+			);
+			path = MenuBar;
+			sourceTree = "<group>";
+		};
+		AAE0D7BF2EA321000001000B /* Preferences */ = {
+			isa = PBXGroup;
+			children = (
+				A1D90C542ABD08B4008F00A1 /* PreferencesView.swift */,
+			);
+			path = Preferences;
+			sourceTree = "<group>";
+		};
+		AA0000010000000000300002 /* Support */ = {
+			isa = PBXGroup;
+			children = (
+				AA0000010000000000100006 /* LogStore.swift */,
+				AA0000010000000000100008 /* ASRTestClient.swift */,
+			);
+			path = Support;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		8BF338B72E9AC61100FF9F32 /* Aidana */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 8BF338C72E9AC61300FF9F32 /* Build configuration list for PBXNativeTarget "Aidana" */;
+			buildPhases = (
+				8BF338B42E9AC61100FF9F32 /* Sources */,
+				8BF338B52E9AC61100FF9F32 /* Frameworks */,
+				8BF338B62E9AC61100FF9F32 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = Aidana;
+			packageProductDependencies = (
+				84726EB52F81A8E300A02972 /* FluidAudio */,
+				AA0000010000000000500001 /* Hummingbird */,
+				AA0000010000000000500002 /* HummingbirdWebSocket */,
+			);
+			productName = Aidana;
+			productReference = 8BF338B82E9AC61100FF9F32 /* Aidana.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		8BF338B02E9AC61100FF9F32 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 1540;
+				LastUpgradeCheck = 1610;
+				TargetAttributes = {
+					8BF338B72E9AC61100FF9F32 = {
+						CreatedOnToolsVersion = 15.4;
+					};
+				};
+			};
+			buildConfigurationList = 8BF338B32E9AC61100FF9F32 /* Build configuration list for PBXProject "Aidana" */;
+			compatibilityVersion = "Xcode 14.0";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = 8BF338AF2E9AC61100FF9F32;
+			packageReferences = (
+				84726EB42F81A8E300A02972 /* XCRemoteSwiftPackageReference "fluid-audio-qwen3" */,
+				AA0000010000000000400001 /* XCRemoteSwiftPackageReference "hummingbird" */,
+				AA0000010000000000400002 /* XCRemoteSwiftPackageReference "hummingbird-websocket" */,
+			);
+			productRefGroup = 8BF338B92E9AC61100FF9F32 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				8BF338B72E9AC61100FF9F32 /* Aidana */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		8BF338B62E9AC61100FF9F32 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				8BF338C32E9AC61300FF9F32 /* Preview Assets.xcassets in Resources */,
+				8BF338C02E9AC61300FF9F32 /* Assets.xcassets in Resources */,
+				AA0000010000000000200009 /* reference.wav in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		8BF338B42E9AC61100FF9F32 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				AAE0D7C72EA3210000010013 /* AppDelegate.swift in Sources */,
+				8BF338BC2E9AC61100FF9F32 /* AidanaApp.swift in Sources */,
+				602709DB37BDC4149A0815C7 /* StatusBarController.swift in Sources */,
+				A1D90C532ABD05BF008F00A1 /* PreferencesStore.swift in Sources */,
+				A1D90C552ABD08B4008F00A1 /* PreferencesView.swift in Sources */,
+				AA0000010000000000200001 /* AIServer.swift in Sources */,
+				AA0000010000000000200002 /* ASRWebSocketHandler.swift in Sources */,
+				AA0000010000000000200004 /* ModelManager.swift in Sources */,
+				AA0000010000000000200005 /* ServerState.swift in Sources */,
+				AA0000010000000000200006 /* LogStore.swift in Sources */,
+				AA0000010000000000200007 /* LogView.swift in Sources */,
+				AA0000010000000000200008 /* ASRTestClient.swift in Sources */,
+				AA000001000000000020000A /* TTSServer.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		8BF338C52E9AC61300FF9F32 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEAD_CODE_STRIPPING = YES;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"DEBUG=1",
+					"$(inherited)",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MACOSX_DEPLOYMENT_TARGET = 15.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				SDKROOT = macosx;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+			};
+			name = Debug;
+		};
+		8BF338C62E9AC61300FF9F32 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEAD_CODE_STRIPPING = YES;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MACOSX_DEPLOYMENT_TARGET = 15.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				SDKROOT = macosx;
+				SWIFT_COMPILATION_MODE = wholemodule;
+			};
+			name = Release;
+		};
+		8BF338C82E9AC61300FF9F32 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = Aidana/Aidana.entitlements;
+				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "-";
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 1;
+				DEAD_CODE_STRIPPING = YES;
+				DEVELOPMENT_ASSET_PATHS = "\"Aidana/Preview Content\"";
+				DEVELOPMENT_TEAM = UDEYSPVEQ3;
+				ENABLE_HARDENED_RUNTIME = YES;
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_LSUIElement = YES;
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Aidana needs microphone access to transcribe speech.";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = de.aronhomberg.aidana;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		8BF338C92E9AC61300FF9F32 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = Aidana/Aidana.entitlements;
+				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "-";
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 1;
+				DEAD_CODE_STRIPPING = YES;
+				DEVELOPMENT_ASSET_PATHS = "\"Aidana/Preview Content\"";
+				DEVELOPMENT_TEAM = UDEYSPVEQ3;
+				ENABLE_HARDENED_RUNTIME = YES;
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_LSUIElement = YES;
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Aidana needs microphone access to transcribe speech.";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = de.aronhomberg.aidana;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		8BF338B32E9AC61100FF9F32 /* Build configuration list for PBXProject "Aidana" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				8BF338C52E9AC61300FF9F32 /* Debug */,
+				8BF338C62E9AC61300FF9F32 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		8BF338C72E9AC61300FF9F32 /* Build configuration list for PBXNativeTarget "Aidana" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				8BF338C82E9AC61300FF9F32 /* Debug */,
+				8BF338C92E9AC61300FF9F32 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+/* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		84726EB42F81A8E300A02972 /* XCRemoteSwiftPackageReference "fluid-audio-qwen3" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/kyr0/fluid-audio-qwen3";
+			requirement = {
+				branch = main;
+				kind = branch;
+			};
+		};
+		AA0000010000000000400001 /* XCRemoteSwiftPackageReference "hummingbird" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/hummingbird-project/hummingbird.git";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 2.0.0;
+			};
+		};
+		AA0000010000000000400002 /* XCRemoteSwiftPackageReference "hummingbird-websocket" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/hummingbird-project/hummingbird-websocket.git";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 2.0.0;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		84726EB52F81A8E300A02972 /* FluidAudio */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 84726EB42F81A8E300A02972 /* XCRemoteSwiftPackageReference "fluid-audio-qwen3" */;
+			productName = FluidAudio;
+		};
+		AA0000010000000000500001 /* Hummingbird */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = AA0000010000000000400001 /* XCRemoteSwiftPackageReference "hummingbird" */;
+			productName = Hummingbird;
+		};
+		AA0000010000000000500002 /* HummingbirdWebSocket */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = AA0000010000000000400002 /* XCRemoteSwiftPackageReference "hummingbird-websocket" */;
+			productName = HummingbirdWebSocket;
+		};
+/* End XCSwiftPackageProductDependency section */
+	};
+	rootObject = 8BF338B02E9AC61100FF9F32 /* Project object */;
+}

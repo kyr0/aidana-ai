@@ -1,0 +1,18 @@
+[project]
+name = "aidana-main"
+version = "0.1.0"
+description = "Add your description here"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi",
+    "httpx",
+    "mlx-audio",
+    "numpy>=2.4.4",
+    "pydantic",
+    "python-multipart",
+    "scipy>=1.17.1",
+    "setuptools<72",
+    "uvicorn",
+    "webrtcvad",
+    "websockets>=16.0",
+]
