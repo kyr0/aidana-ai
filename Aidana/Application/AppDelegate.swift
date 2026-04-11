@@ -108,6 +108,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             do {
                 try await self.aiServer.modelManager.prepareASR()
                 await MainActor.run {
+                    self.logStore.append("Warming ASR inference…")
+                }
+
+                do {
+                    let warmupDuration = try await self.aiServer.modelManager.warmupASR()
+                    let warmupMs = Int(warmupDuration * 1000)
+                    await MainActor.run {
+                        self.logStore.append("ASR warmup complete (\(warmupMs) ms)")
+                    }
+                } catch {
+                    self.logger.error("ASR warmup failed: \(error)")
+                    await MainActor.run {
+                        self.logStore.append("ASR warmup failed: \(error.localizedDescription)")
+                    }
+                }
+
+                await MainActor.run {
                     self.serverState.setASRModelReady(true)
                     self.logStore.append("ASR models loaded")
                 }
@@ -180,6 +197,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         do {
             try await ttsServer.preloadModel(modelName, port: ttsPort)
             await MainActor.run {
+                ttsLogStore.append("Warming TTS inference…")
+            }
+
+            do {
+                let warmupConfig = await MainActor.run { self.currentTTSWarmupConfig(modelName: modelName) }
+                let metrics = try await ttsServer.warmup(config: warmupConfig, port: ttsPort)
+                await MainActor.run {
+                    ttsLogStore.append(
+                        "TTS warmup complete (first byte \(metrics.firstByteLatencyMs) ms, total \(metrics.totalDurationMs) ms)"
+                    )
+                }
+            } catch {
+                logger.error("TTS warmup failed: \(error)")
+                await MainActor.run {
+                    ttsLogStore.append("TTS warmup failed: \(error.localizedDescription)")
+                }
+            }
+
+            await MainActor.run {
                 serverState.setTTSReady(true, port: ttsPort)
                 ttsLogStore.append("TTS model loaded: \(modelName)")
             }
@@ -232,6 +268,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         serverState.setTTSStatus(.stopped)
         logStore.append("Server stopped")
         ttsLogStore.append("TTS server stopped")
+    }
+
+    private func currentTTSWarmupConfig(modelName: String) -> TTSServer.WarmupConfig {
+        let configuredRefAudio = preferences.ttsRefAudioPath.trimmingCharacters(in: .whitespacesAndNewlines)
+        let fallbackRefAudio = TTSServer.defaultReferenceAudioPath()
+        return TTSServer.WarmupConfig(
+            modelName: modelName,
+            refAudioPath: configuredRefAudio.isEmpty ? fallbackRefAudio : configuredRefAudio,
+            refText: preferences.ttsRefText,
+            langCode: preferences.ttsLangCode,
+            speed: preferences.ttsSpeed,
+            gender: preferences.ttsGender,
+            text: "Hallo.",
+            streamingInterval: preferences.ttsStreamingInterval,
+            maxTokens: 128,
+        )
     }
 }
 

@@ -14,6 +14,7 @@ actor ModelManager {
     private(set) var asrModels: AsrModels?
 
     private(set) var asrReady = false
+    private(set) var asrWarmedUp = false
 
     /// Default cache directory used by FluidAudio for Parakeet TDT v3 models.
     static var modelCacheDirectory: URL {
@@ -46,12 +47,39 @@ actor ModelManager {
         return try await manager.transcribe(samples, source: .microphone)
     }
 
+    func warmupASR() async throws -> TimeInterval {
+        guard let manager = asrManager else {
+            throw ModelError.notReady("ASR models not loaded")
+        }
+
+        guard !asrWarmedUp else { return 0 }
+
+        let sampleRate = 16_000
+        let durationSeconds = 2.0
+        let sampleCount = Int(Double(sampleRate) * durationSeconds)
+        var samples = [Float]()
+        samples.reserveCapacity(sampleCount)
+
+        for index in 0..<sampleCount {
+            let time = Double(index) / Double(sampleRate)
+            samples.append(Float(sin(2 * Double.pi * 220 * time) * 0.05))
+        }
+
+        let startedAt = Date()
+        _ = try await manager.transcribe(samples, source: .microphone)
+        let elapsed = Date().timeIntervalSince(startedAt)
+        asrWarmedUp = true
+        logger.info("ASR warmup completed in \(elapsed, privacy: .public)s")
+        return elapsed
+    }
+
     // MARK: - Lifecycle
 
     func shutdown() {
         asrManager = nil
         asrModels = nil
         asrReady = false
+        asrWarmedUp = false
         logger.info("ModelManager shut down")
     }
 

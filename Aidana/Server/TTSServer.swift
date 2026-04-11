@@ -16,6 +16,24 @@ actor TTSServer {
 
     private(set) var isRunning = false
 
+    struct WarmupConfig: Sendable {
+        let modelName: String
+        let refAudioPath: String
+        let refText: String
+        let langCode: String
+        let speed: Double
+        let gender: String
+        let text: String
+        let streamingInterval: Double
+        let maxTokens: Int
+    }
+
+    struct WarmupMetrics: Sendable {
+        let firstByteLatencyMs: Int
+        let totalDurationMs: Int
+        let totalBytes: Int
+    }
+
     /// Resolve the Python executable inside the project's .venv.
     private static func pythonPath() -> String {
         let sourceDir = URL(fileURLWithPath: #filePath)
@@ -23,6 +41,18 @@ actor TTSServer {
             .deletingLastPathComponent() // Aidana/
             .deletingLastPathComponent() // project root
         return sourceDir.appendingPathComponent(".venv/bin/python").path
+    }
+
+    static func defaultReferenceAudioPath() -> String {
+        let sourceDir = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent() // Server/
+            .deletingLastPathComponent() // Aidana/
+            .deletingLastPathComponent() // project root
+        let path = sourceDir.appendingPathComponent("reference.wav").path
+        guard FileManager.default.fileExists(atPath: path) else {
+            return ""
+        }
+        return path
     }
 
     /// Resolve a writable log directory for mlx_audio.server.
@@ -155,6 +185,66 @@ actor TTSServer {
         logger.info("TTS model preloaded: \(modelName)")
     }
 
+    func warmup(config: WarmupConfig, port: Int) async throws -> WarmupMetrics {
+        let url = URL(string: "http://localhost:\(port)/v1/audio/speech")!
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.timeoutInterval = 180
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+
+        var payload: [String: Any] = [
+            "model": config.modelName,
+            "input": config.text,
+            "stream": true,
+            "response_format": "pcm",
+            "ref_text": config.refText,
+            "lang_code": config.langCode,
+            "speed": config.speed,
+            "gender": config.gender,
+            "streaming_interval": config.streamingInterval,
+            "temperature": 0.1,
+            "top_p": 1.0,
+            "repetition_penalty": 1.2,
+            "max_tokens": config.maxTokens,
+        ]
+
+        if !config.refAudioPath.isEmpty {
+            payload["ref_audio"] = config.refAudioPath
+        }
+
+        request.httpBody = try JSONSerialization.data(withJSONObject: payload)
+
+        let startedAt = Date()
+        let (bytes, response) = try await URLSession.shared.bytes(for: request)
+        guard let http = response as? HTTPURLResponse else {
+            throw TTSError.warmupFailed("missing HTTP response")
+        }
+
+        guard http.statusCode == 200 else {
+            throw TTSError.warmupFailed("HTTP \(http.statusCode)")
+        }
+
+        var firstByteLatencyMs: Int?
+        var totalBytes = 0
+        for try await _ in bytes {
+            totalBytes += 1
+            if firstByteLatencyMs == nil {
+                firstByteLatencyMs = Int(Date().timeIntervalSince(startedAt) * 1000)
+            }
+        }
+
+        let totalDurationMs = Int(Date().timeIntervalSince(startedAt) * 1000)
+        let metrics = WarmupMetrics(
+            firstByteLatencyMs: firstByteLatencyMs ?? totalDurationMs,
+            totalDurationMs: totalDurationMs,
+            totalBytes: totalBytes,
+        )
+        logger.info(
+            "TTS warmup completed in \(metrics.totalDurationMs)ms (first byte \(metrics.firstByteLatencyMs)ms, \(metrics.totalBytes) bytes)"
+        )
+        return metrics
+    }
+
     /// Stop the Python process and all its children.
     func stop() {
         guard let proc = process else { return }
@@ -190,6 +280,7 @@ actor TTSServer {
     enum TTSError: LocalizedError {
         case pythonNotFound(String)
         case preloadFailed(String)
+        case warmupFailed(String)
 
         var errorDescription: String? {
             switch self {
@@ -197,6 +288,8 @@ actor TTSServer {
                 return "Python not found at \(path). Run 'make setup' to create the virtual environment."
             case .preloadFailed(let model):
                 return "Failed to preload TTS model: \(model)"
+            case .warmupFailed(let message):
+                return "Failed to warm up TTS inference: \(message)"
             }
         }
     }

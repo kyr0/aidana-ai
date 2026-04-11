@@ -58,6 +58,11 @@ const VOICE_DETECTOR_TUNING: VoiceDetectorOptions = Object.freeze({
 
 const HEALTH_URL = "http://localhost:31337/health";
 const ASR_URL = "ws://localhost:31337/asr";
+const TTS_CONFIG_URL = "http://localhost:31337/tts/config";
+const DEFAULT_TTS_PORT = 31338;
+const TTS_STREAM_START_BUFFER_SECONDS = 0.18;
+const TTS_STREAM_START_LEAD_SECONDS = 0.06;
+const TTS_STREAM_PACKET_DEBUG_INTERVAL = 10;
 
 const DEVICE_PREF_KEY = "__aidana_voice_agent_input_device";
 const MIC_PERMISSION_PREF_KEY = "__aidana_voice_agent_mic_permission";
@@ -121,6 +126,26 @@ type OverlayMessage = {
 
 type AsrLanguageId = (typeof ASR_LANGUAGES)[number]["id"];
 
+type TTSConfig = {
+    port: number;
+    model: string;
+    refAudioPath: string;
+    refText: string;
+    langCode: string;
+    speed: number;
+    gender: string;
+    streamingInterval: number;
+    sampleRate: number;
+    channels: number;
+    bitsPerSample: number;
+};
+
+type TTSQueueItem = {
+    id: string;
+    text: string;
+    createdAt: number;
+};
+
 type VoiceDetectionResult = {
     isVoiceStable: boolean;
     rms: number;
@@ -165,6 +190,19 @@ type AgentState = {
     pcmPacketsSent: number;
     asrTextPacketCount: number;
     lastAsrPacketText: string;
+    ttsConfig: TTSConfig | null;
+    ttsQueue: TTSQueueItem[];
+    ttsRequestActive: boolean;
+    ttsPlaying: boolean;
+    ttsGateActive: boolean;
+    ttsPendingChunks: Float32Array[];
+    ttsPendingSeconds: number;
+    ttsNextPlaybackTime: number;
+    ttsPrimed: boolean;
+    ttsChunkRemainder: Uint8Array;
+    ttsAbortController: AbortController | null;
+    ttsOutputNode: GainNode | null;
+    ttsScheduledSources: Set<AudioBufferSourceNode>;
     overlayAutoScrollPinned: boolean;
     destroying: boolean;
 };
@@ -206,6 +244,19 @@ const state: AgentState = {
     pcmPacketsSent: 0,
     asrTextPacketCount: 0,
     lastAsrPacketText: "",
+    ttsConfig: null,
+    ttsQueue: [],
+    ttsRequestActive: false,
+    ttsPlaying: false,
+    ttsGateActive: false,
+    ttsPendingChunks: [],
+    ttsPendingSeconds: 0,
+    ttsNextPlaybackTime: 0,
+    ttsPrimed: false,
+    ttsChunkRemainder: new Uint8Array(0),
+    ttsAbortController: null,
+    ttsOutputNode: null,
+    ttsScheduledSources: new Set<AudioBufferSourceNode>(),
     overlayAutoScrollPinned: true,
     destroying: false,
 };
@@ -216,6 +267,7 @@ let targetMouthValue = 0;
 let currentMouthValue = 0;
 let animationLoopStarted = false;
 let overlayMarkdownDisabled = false;
+let ttsConfigPromise: Promise<TTSConfig> | null = null;
 
 function q<T extends HTMLElement>(id: string): T {
     const element = document.getElementById(id);
@@ -569,6 +621,595 @@ function clearStreamingUserOverlay() {
     renderOverlayMessages();
 }
 
+function appendOverlayMessage(
+    role: OverlayRole,
+    content: string,
+    streaming = false,
+): string | null {
+    const trimmedContent = content.trim();
+    if (!trimmedContent) {
+        return null;
+    }
+
+    const message: OverlayMessage = {
+        id: createOverlayMessageId(),
+        role,
+        content: trimmedContent,
+        createdAt: Date.now(),
+        streaming,
+    };
+
+    state.overlayMessages = [...state.overlayMessages, message];
+    trimOverlayMessages();
+    renderOverlayMessages();
+    return message.id;
+}
+
+function setOverlayMessageStreaming(messageId: string | null, streaming: boolean) {
+    if (!messageId) {
+        return;
+    }
+
+    const message = state.overlayMessages.find((item) => item.id === messageId);
+    if (!message) {
+        return;
+    }
+
+    message.streaming = streaming;
+    renderOverlayMessages();
+}
+
+function finalizeAssistantOverlayStreaming() {
+    let didUpdate = false;
+    for (const message of state.overlayMessages) {
+        if (message.role !== "assistant" || !message.streaming) {
+            continue;
+        }
+        message.streaming = false;
+        didUpdate = true;
+    }
+
+    if (didUpdate) {
+        renderOverlayMessages();
+    }
+}
+
+function listeningStatusDescription() {
+    const microphoneName = activeMicrophoneLabel() ?? "the selected microphone";
+    return `Aidana is capturing ${microphoneName} with echo cancellation, will stream only VAD-detected utterances to the local ASR service, and will pause capture while local TTS playback is draining.`;
+}
+
+function setListeningStatus() {
+    setStatus("Listening", listeningStatusDescription());
+}
+
+function normalizeTtsInput(text: string) {
+    return text.replace(/\s+/g, " ").trim();
+}
+
+function currentTtsUrl() {
+    const port = state.ttsConfig?.port ?? DEFAULT_TTS_PORT;
+    return `http://localhost:${port}/v1/audio/speech`;
+}
+
+function ttsSampleRate() {
+    return state.ttsConfig?.sampleRate ?? 24000;
+}
+
+function hasPendingTtsWork() {
+    return state.ttsRequestActive ||
+        state.ttsPendingChunks.length > 0 ||
+        state.ttsScheduledSources.size > 0 ||
+        state.ttsQueue.length > 0;
+}
+
+function resetTtsPendingBuffers() {
+    state.ttsPendingChunks = [];
+    state.ttsPendingSeconds = 0;
+    state.ttsNextPlaybackTime = 0;
+    state.ttsPrimed = false;
+    state.ttsChunkRemainder = new Uint8Array(0);
+}
+
+function stopScheduledTtsSources() {
+    if (state.ttsScheduledSources.size === 0) {
+        return;
+    }
+
+    for (const source of state.ttsScheduledSources) {
+        try {
+            source.onended = null;
+            source.stop();
+        } catch { }
+
+        try {
+            source.disconnect();
+        } catch { }
+    }
+
+    state.ttsScheduledSources.clear();
+}
+
+function activateTtsGate() {
+    if (state.ttsGateActive) {
+        return;
+    }
+
+    state.ttsGateActive = true;
+    state.currentLevel = 0;
+    state.residual = new Float32Array(0);
+    state.prerollFrames = [];
+    targetMouthValue = 0;
+    currentMouthValue = 0;
+    resetVoiceActivityGate();
+    updateLevelIndicator();
+    applyMouthMorph(0);
+    renderSessionState();
+    setStatus(
+        "Speaking",
+        "Aidana is streaming local TTS audio. Microphone capture is paused until playback drains to avoid feeding the speaker output back into ASR.",
+    );
+    appendLog("Pausing ASR capture while streamed TTS audio is playing.");
+}
+
+function releaseTtsGateIfIdle() {
+    if (!state.ttsGateActive || hasPendingTtsWork()) {
+        return;
+    }
+
+    state.ttsGateActive = false;
+    state.ttsPlaying = false;
+    state.currentLevel = 0;
+    targetMouthValue = 0;
+    currentMouthValue = 0;
+    updateLevelIndicator();
+    applyMouthMorph(0);
+    renderSessionState();
+
+    if (state.sessionActive && !state.destroying) {
+        setListeningStatus();
+        appendLog("TTS playback drained. ASR capture resumed.");
+    }
+}
+
+function stopTtsPlayback(reason: string) {
+    const hadActivity = state.ttsGateActive || hasPendingTtsWork();
+    const controller = state.ttsAbortController;
+
+    state.ttsQueue = [];
+    state.ttsRequestActive = false;
+    state.ttsAbortController = null;
+    state.ttsPlaying = false;
+
+    if (controller) {
+        controller.abort();
+    }
+
+    stopScheduledTtsSources();
+    resetTtsPendingBuffers();
+
+    if (state.ttsOutputNode) {
+        try {
+            state.ttsOutputNode.disconnect();
+        } catch { }
+        state.ttsOutputNode = null;
+    }
+
+    finalizeAssistantOverlayStreaming();
+
+    if (hadActivity) {
+        state.ttsGateActive = false;
+        state.currentLevel = 0;
+        targetMouthValue = 0;
+        currentMouthValue = 0;
+        updateLevelIndicator();
+        applyMouthMorph(0);
+        appendLog(reason);
+    }
+
+    renderSessionState();
+}
+
+async function loadTtsConfig(force = false): Promise<TTSConfig> {
+    if (!force && state.ttsConfig) {
+        return state.ttsConfig;
+    }
+
+    if (!force && ttsConfigPromise) {
+        return ttsConfigPromise;
+    }
+
+    const hadConfig = state.ttsConfig != null;
+    ttsConfigPromise = (async () => {
+        const response = await fetch(TTS_CONFIG_URL, { cache: "no-store" });
+        if (!response.ok) {
+            throw new Error(`Aidana TTS config request failed with status ${response.status}.`);
+        }
+
+        const data = (await response.json()) as Partial<TTSConfig>;
+        const config: TTSConfig = {
+            port: typeof data.port === "number" && data.port > 0 ? data.port : DEFAULT_TTS_PORT,
+            model: typeof data.model === "string" && data.model.length > 0
+                ? data.model
+                : "kyr0/qwen3-TTS-12Hz-0.6B-Base-4bit-partial-quantization",
+            refAudioPath: typeof data.refAudioPath === "string" ? data.refAudioPath : "",
+            refText: typeof data.refText === "string" && data.refText.length > 0
+                ? data.refText
+                : "Das ist ein Referenztext.",
+            langCode: typeof data.langCode === "string" && data.langCode.length > 0
+                ? data.langCode
+                : "german",
+            speed: typeof data.speed === "number" && data.speed > 0 ? data.speed : 3,
+            gender: typeof data.gender === "string" && data.gender.length > 0
+                ? data.gender
+                : "male",
+            streamingInterval:
+                typeof data.streamingInterval === "number" && data.streamingInterval > 0
+                    ? data.streamingInterval
+                    : 0.25,
+            sampleRate: typeof data.sampleRate === "number" && data.sampleRate > 0
+                ? data.sampleRate
+                : 24000,
+            channels: typeof data.channels === "number" && data.channels > 0 ? data.channels : 1,
+            bitsPerSample: typeof data.bitsPerSample === "number" && data.bitsPerSample > 0
+                ? data.bitsPerSample
+                : 16,
+        };
+
+        if (!config.refAudioPath) {
+            throw new Error(
+                "Aidana TTS reference audio is not configured. Set one in the Aidana TTS preferences or keep reference.wav in the project root.",
+            );
+        }
+
+        state.ttsConfig = config;
+        traceVoiceAgent("tts config loaded", {
+            port: config.port,
+            model: config.model,
+            langCode: config.langCode,
+            streamingInterval: config.streamingInterval,
+            sampleRate: config.sampleRate,
+        });
+        if (!hadConfig) {
+            appendLog(`TTS config ready on port ${config.port} (${config.model}).`);
+        }
+        return config;
+    })().finally(() => {
+        ttsConfigPromise = null;
+    });
+
+    return ttsConfigPromise;
+}
+
+function appendUint8Arrays(left: Uint8Array, right: Uint8Array) {
+    const merged = new Uint8Array(left.length + right.length);
+    merged.set(left);
+    merged.set(right, left.length);
+    return merged;
+}
+
+function decodeTtsPcm16Le(bytes: Uint8Array) {
+    const sampleCount = Math.floor(bytes.length / 2);
+    const samples = new Float32Array(sampleCount);
+    const view = new DataView(bytes.buffer, bytes.byteOffset, sampleCount * 2);
+
+    for (let index = 0; index < sampleCount; index += 1) {
+        samples[index] = view.getInt16(index * 2, true) / 32768;
+    }
+
+    return samples;
+}
+
+function ensureTtsOutputNode() {
+    const audioCtx = state.audioCtx;
+    if (!audioCtx) {
+        throw new Error("Voice audio context is not ready for TTS playback.");
+    }
+
+    if (!state.ttsOutputNode) {
+        const outputNode = audioCtx.createGain();
+        outputNode.gain.value = 1;
+        outputNode.connect(audioCtx.destination);
+        state.ttsOutputNode = outputNode;
+    }
+
+    return state.ttsOutputNode;
+}
+
+function scheduleTtsChunk(samples: Float32Array, sampleRate: number) {
+    const audioCtx = state.audioCtx;
+    if (!audioCtx || samples.length === 0) {
+        return;
+    }
+
+    const outputNode = ensureTtsOutputNode();
+    const buffer = audioCtx.createBuffer(1, samples.length, sampleRate);
+    buffer.getChannelData(0).set(samples);
+
+    let startAt = state.ttsNextPlaybackTime;
+    const minimumStart = audioCtx.currentTime + TTS_STREAM_START_LEAD_SECONDS;
+    if (startAt < minimumStart) {
+        if (state.ttsPrimed && state.ttsScheduledSources.size > 0) {
+            traceVoiceAgent("tts playback resync", {
+                bufferedAheadMs: Math.round((state.ttsNextPlaybackTime - audioCtx.currentTime) * 1000),
+            });
+            appendLog("TTS playback buffer underrun detected. Re-priming the local stream.");
+        }
+        startAt = minimumStart;
+    }
+
+    const source = audioCtx.createBufferSource();
+    source.buffer = buffer;
+    source.connect(outputNode);
+    state.ttsScheduledSources.add(source);
+
+    source.onended = () => {
+        try {
+            source.disconnect();
+        } catch { }
+
+        state.ttsScheduledSources.delete(source);
+        if (state.ttsScheduledSources.size === 0 && !hasPendingTtsWork()) {
+            resetTtsPendingBuffers();
+            releaseTtsGateIfIdle();
+        }
+    };
+
+    source.start(startAt);
+    state.ttsPlaying = true;
+    state.ttsNextPlaybackTime = startAt + buffer.duration;
+}
+
+function flushTtsPlaybackQueue(force = false) {
+    const audioCtx = state.audioCtx;
+    if (!audioCtx || state.ttsPendingChunks.length === 0) {
+        return;
+    }
+
+    if (
+        !state.ttsPrimed &&
+        !force &&
+        state.ttsPendingSeconds < TTS_STREAM_START_BUFFER_SECONDS &&
+        state.ttsScheduledSources.size === 0
+    ) {
+        return;
+    }
+
+    if (!state.ttsPrimed) {
+        state.ttsPrimed = true;
+        if (state.ttsNextPlaybackTime < audioCtx.currentTime + TTS_STREAM_START_LEAD_SECONDS) {
+            state.ttsNextPlaybackTime = audioCtx.currentTime + TTS_STREAM_START_LEAD_SECONDS;
+        }
+        appendLog(`Starting TTS playback with ${Math.round(state.ttsPendingSeconds * 1000)}ms of buffered PCM.`);
+        traceVoiceAgent("tts playback start", {
+            bufferedMs: Math.round(state.ttsPendingSeconds * 1000),
+            queueDepth: state.ttsQueue.length,
+        });
+        renderSessionState();
+    }
+
+    const sampleRate = ttsSampleRate();
+    while (state.ttsPendingChunks.length > 0) {
+        const chunk = state.ttsPendingChunks.shift();
+        if (!chunk) {
+            continue;
+        }
+        state.ttsPendingSeconds = Math.max(
+            0,
+            state.ttsPendingSeconds - chunk.length / sampleRate,
+        );
+        scheduleTtsChunk(chunk, sampleRate);
+    }
+}
+
+function enqueueTtsSamples(samples: Float32Array) {
+    if (samples.length === 0) {
+        return;
+    }
+
+    state.ttsPendingChunks.push(samples);
+    state.ttsPendingSeconds += samples.length / ttsSampleRate();
+    flushTtsPlaybackQueue(false);
+}
+
+function ingestTtsPcmBytes(chunk: Uint8Array) {
+    const combined = state.ttsChunkRemainder.length > 0
+        ? appendUint8Arrays(state.ttsChunkRemainder, chunk)
+        : chunk;
+
+    const evenLength = combined.length - (combined.length % 2);
+    if (evenLength <= 0) {
+        state.ttsChunkRemainder = combined.slice();
+        return;
+    }
+
+    const pcmBytes = combined.subarray(0, evenLength);
+    state.ttsChunkRemainder = combined.slice(evenLength);
+    enqueueTtsSamples(decodeTtsPcm16Le(pcmBytes));
+}
+
+function buildTtsRequestPayload(text: string, config: TTSConfig) {
+    const payload: Record<string, unknown> = {
+        model: config.model,
+        input: text,
+        stream: true,
+        response_format: "pcm",
+        ref_text: config.refText,
+        lang_code: config.langCode,
+        speed: config.speed,
+        gender: config.gender,
+        streaming_interval: config.streamingInterval,
+        temperature: 0.1,
+        top_p: 1.0,
+        repetition_penalty: 1.2,
+        max_tokens: 4096,
+    };
+
+    if (config.refAudioPath) {
+        payload.ref_audio = config.refAudioPath;
+    }
+
+    return payload;
+}
+
+async function streamTtsJob(job: TTSQueueItem) {
+    let overlayMessageId: string | null = null;
+
+    try {
+        const normalizedText = normalizeTtsInput(job.text);
+        if (!normalizedText) {
+            return;
+        }
+
+        const config = await loadTtsConfig();
+        if (!state.audioCtx) {
+            throw new Error("Voice session audio is not ready for TTS playback.");
+        }
+
+        await state.audioCtx.resume();
+        activateTtsGate();
+        state.ttsRequestActive = true;
+        state.ttsAbortController = new AbortController();
+        state.ttsChunkRemainder = new Uint8Array(0);
+        renderSessionState();
+
+        overlayMessageId = appendOverlayMessage("assistant", normalizedText, true);
+
+        const startedAt = performance.now();
+        appendLog(`Starting streamed TTS for: ${normalizedText}`);
+        traceVoiceAgent("tts stream opening", {
+            url: currentTtsUrl(),
+            port: config.port,
+            text: normalizedText,
+        });
+
+        const response = await fetch(currentTtsUrl(), {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+            },
+            body: JSON.stringify(buildTtsRequestPayload(normalizedText, config)),
+            signal: state.ttsAbortController.signal,
+        });
+
+        if (!response.ok) {
+            const body = await response.text();
+            throw new Error(
+                `TTS request failed with status ${response.status}${body ? `: ${body}` : "."}`,
+            );
+        }
+
+        if (!response.body) {
+            throw new Error("TTS response did not include a readable PCM stream.");
+        }
+
+        const reader = response.body.getReader();
+        let packetCount = 0;
+        let totalBytes = 0;
+        let firstPacketLogged = false;
+
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) {
+                break;
+            }
+
+            if (!value || value.length === 0) {
+                continue;
+            }
+
+            packetCount += 1;
+            totalBytes += value.length;
+
+            if (!firstPacketLogged) {
+                firstPacketLogged = true;
+                const latencyMs = Math.round(performance.now() - startedAt);
+                appendLog(`TTS first PCM packet arrived after ${latencyMs}ms.`);
+                traceVoiceAgent("tts<- first pcm", {
+                    latencyMs,
+                    bytes: value.length,
+                });
+            }
+
+            if (packetCount === 1 || packetCount % TTS_STREAM_PACKET_DEBUG_INTERVAL === 0) {
+                traceVoiceAgent("tts<- pcm", {
+                    packetCount,
+                    totalBytes,
+                    bufferedMs: Math.round(state.ttsPendingSeconds * 1000),
+                    scheduledChunks: state.ttsScheduledSources.size,
+                });
+            }
+
+            ingestTtsPcmBytes(value);
+        }
+
+        if (state.ttsChunkRemainder.length > 0) {
+            traceVoiceAgent("tts pcm tail dropped", {
+                bytes: state.ttsChunkRemainder.length,
+            });
+            state.ttsChunkRemainder = new Uint8Array(0);
+        }
+
+        flushTtsPlaybackQueue(true);
+        appendLog(`TTS stream finished (${packetCount} PCM packets, ${totalBytes} bytes).`);
+    } catch (error) {
+        if (error instanceof DOMException && error.name === "AbortError") {
+            traceVoiceAgent("tts stream aborted", { jobId: job.id });
+        } else {
+            const message = error instanceof Error ? error.message : String(error);
+            appendLog(`TTS stream failed: ${message}`);
+            setStatus("TTS Playback Failed", message, "destructive");
+        }
+    } finally {
+        setOverlayMessageStreaming(overlayMessageId, false);
+        state.ttsAbortController = null;
+        state.ttsRequestActive = false;
+        state.ttsChunkRemainder = new Uint8Array(0);
+        renderSessionState();
+        releaseTtsGateIfIdle();
+    }
+}
+
+async function pumpTtsQueue() {
+    if (!state.sessionActive || state.ttsRequestActive || state.ttsQueue.length === 0) {
+        return;
+    }
+
+    const nextJob = state.ttsQueue.shift();
+    if (!nextJob) {
+        return;
+    }
+
+    await streamTtsJob(nextJob);
+
+    if (state.ttsQueue.length > 0) {
+        void pumpTtsQueue();
+        return;
+    }
+
+    releaseTtsGateIfIdle();
+}
+
+function queueTtsEcho(text: string) {
+    const normalizedText = normalizeTtsInput(text);
+    if (!normalizedText || !state.sessionActive) {
+        return;
+    }
+
+    state.ttsQueue.push({
+        id: createOverlayMessageId(),
+        text: normalizedText,
+        createdAt: Date.now(),
+    });
+    traceVoiceAgent("tts queued", {
+        queueDepth: state.ttsQueue.length,
+        text: normalizedText,
+    });
+    appendLog(`Queued transcript for streamed TTS (${normalizedText.length} chars).`);
+    renderSessionState();
+    void pumpTtsQueue();
+}
+
 function setPill(
     id: string,
     text: string,
@@ -619,26 +1260,48 @@ function updateLevelIndicator() {
 
 function renderSessionState() {
     q("selected-microphone").textContent = selectedMicrophoneLabel();
-    q("voice-inline-status").textContent = state.sessionActive
-        ? "The dedicated window is listening locally and will keep running while this window stays open."
+    q("voice-inline-status").textContent = state.ttsGateActive
+        ? "Aidana is playing streamed local TTS audio and will resume microphone capture automatically when the playback buffer drains."
+        : state.sessionActive
+            ? "The dedicated window is listening locally and will keep running while this window stays open."
         : state.preparingSession
             ? "Waiting for microphone access and validating the local Aidana ASR runtime."
             : "Activate the session to grant microphone access and start local ASR streaming.";
 
     setPill(
         "session-pill",
-        state.sessionActive ? "Listening" : state.preparingSession ? "Preparing" : "Idle",
-        state.sessionActive ? "active" : state.preparingSession ? "warn" : "idle",
+        state.ttsGateActive
+            ? "Speaking"
+            : state.sessionActive
+                ? "Listening"
+                : state.preparingSession
+                    ? "Preparing"
+                    : "Idle",
+        state.ttsGateActive
+            ? "warn"
+            : state.sessionActive
+                ? "active"
+                : state.preparingSession
+                    ? "warn"
+                    : "idle",
     );
 
     setPill(
         "vad-pill",
-        state.utteranceActive
-            ? "Speech detected"
-            : state.awaitingFinal
-                ? "Finalizing"
-                : "Silence",
-        state.utteranceActive ? "active" : state.awaitingFinal ? "warn" : "idle",
+        state.ttsGateActive
+            ? "Paused for TTS"
+            : state.utteranceActive
+                ? "Speech detected"
+                : state.awaitingFinal
+                    ? "Finalizing"
+                    : "Silence",
+        state.ttsGateActive
+            ? "warn"
+            : state.utteranceActive
+                ? "active"
+                : state.awaitingFinal
+                    ? "warn"
+                    : "idle",
     );
 
     const asrText = state.asrHealthy === false
@@ -811,6 +1474,9 @@ async function handleAsrMessage(rawData: unknown) {
         }
 
         finalizeStreamingUserOverlay(finalText);
+        if (finalText) {
+            queueTtsEcho(finalText);
+        }
 
         state.confirmedTranscript = "";
         state.volatileTranscript = "";
@@ -1187,6 +1853,8 @@ async function ensureAvatarReady() {
 }
 
 async function teardownAudioSession() {
+    stopScheduledTtsSources();
+
     try {
         state.processor?.disconnect();
     } catch { }
@@ -1217,6 +1885,8 @@ async function teardownAudioSession() {
     state.processor = null;
     state.muteNode = null;
     state.residual = new Float32Array(0);
+    state.ttsOutputNode = null;
+    resetTtsPendingBuffers();
 }
 
 function destroyDetector() {
@@ -1385,6 +2055,13 @@ async function startVoiceSession(deviceId: string | null) {
         const ratio = nativeRate / TARGET_SAMPLE_RATE;
 
         processor.onaudioprocess = (event) => {
+            if (state.ttsGateActive) {
+                state.currentLevel = 0;
+                state.residual = new Float32Array(0);
+                targetMouthValue = 0;
+                return;
+            }
+
             if (!state.sessionActive || !state.detector) {
                 return;
             }
@@ -1444,13 +2121,14 @@ async function startVoiceSession(deviceId: string | null) {
         renderSessionState();
 
         const microphoneName = activeMicrophoneLabel() ?? "the selected microphone";
-        setStatus(
-            "Listening",
-            `Aidana is capturing ${microphoneName} with echo cancellation and will stream only VAD-detected utterances to the local ASR service.`,
-        );
+        setListeningStatus();
         appendLog(
             `Voice session started (${nativeRate} Hz input -> ${TARGET_SAMPLE_RATE} Hz ASR) using ${microphoneName}.`,
         );
+        void loadTtsConfig().catch((error) => {
+            const message = error instanceof Error ? error.message : String(error);
+            appendLog(`TTS config warmup failed: ${message}`);
+        });
     } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
 
@@ -1477,6 +2155,7 @@ async function startVoiceSession(deviceId: string | null) {
             "destructive",
         );
         appendLog(`Voice session failed: ${message}`);
+        stopTtsPlayback("Stopped local TTS playback.");
         await teardownAudioSession();
         destroyDetector();
         closeAsrSocket(1011, "Startup failed");
@@ -1497,6 +2176,7 @@ async function stopVoiceSession(reason: string) {
     updateLevelIndicator();
     applyMouthMorph(0);
     clearStreamingUserOverlay();
+    stopTtsPlayback("Stopped local TTS playback.");
     updateTranscriptPanels();
 
     await teardownAudioSession();

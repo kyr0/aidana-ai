@@ -31,6 +31,55 @@ actor AIServer {
         wakeWordProvider = provider
     }
 
+    private struct TTSConfigResponse: Codable {
+        let port: Int
+        let model: String
+        let refAudioPath: String
+        let refText: String
+        let langCode: String
+        let speed: Double
+        let gender: String
+        let streamingInterval: Double
+        let sampleRate: Int
+        let channels: Int
+        let bitsPerSample: Int
+    }
+
+    private static func defaultTTSReferenceAudioPath() -> String {
+        let projectRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent() // Server/
+            .deletingLastPathComponent() // Aidana/
+            .deletingLastPathComponent() // project root
+        let fallback = projectRoot.appendingPathComponent("reference.wav").path
+        guard FileManager.default.fileExists(atPath: fallback) else {
+            return ""
+        }
+        return fallback
+    }
+
+    private static func currentTTSConfig() -> TTSConfigResponse {
+        let defaults = UserDefaults.standard
+        let storedPort = defaults.integer(forKey: "preferences.ttsPort")
+        let storedSpeed = defaults.double(forKey: "preferences.ttsSpeed")
+        let storedStreamingInterval = defaults.double(forKey: "preferences.ttsStreamingInterval")
+        let storedRefAudioPath = defaults.string(forKey: "preferences.ttsRefAudioPath") ?? ""
+
+        return TTSConfigResponse(
+            port: storedPort == 0 ? 31338 : storedPort,
+            model: defaults.string(forKey: "preferences.ttsModelName")
+                ?? "kyr0/qwen3-TTS-12Hz-0.6B-Base-4bit-partial-quantization",
+            refAudioPath: storedRefAudioPath.isEmpty ? Self.defaultTTSReferenceAudioPath() : storedRefAudioPath,
+            refText: defaults.string(forKey: "preferences.ttsRefText") ?? "Das ist ein Referenztext.",
+            langCode: defaults.string(forKey: "preferences.ttsLangCode") ?? "german",
+            speed: storedSpeed == 0 ? 3.0 : storedSpeed,
+            gender: defaults.string(forKey: "preferences.ttsGender") ?? "male",
+            streamingInterval: storedStreamingInterval == 0 ? 0.25 : storedStreamingInterval,
+            sampleRate: 24000,
+            channels: 1,
+            bitsPerSample: 16,
+        )
+    }
+
     func start(port: Int) async throws {
         guard !isRunning else {
             logger.warning("Server already running")
@@ -64,6 +113,20 @@ actor AIServer {
             let body = """
             {"asr":{"model":"parakeet-tdt-0.6b-v3","loaded":\(asrReady)}}
             """
+            return Response(
+                status: .ok,
+                headers: [.contentType: "application/json"],
+                body: .init(byteBuffer: ByteBuffer(string: body))
+            )
+        }
+
+        router.get("/tts/config") { _, _ -> Response in
+            let config = Self.currentTTSConfig()
+            let encoded = try JSONEncoder().encode(config)
+            guard let body = String(data: encoded, encoding: .utf8) else {
+                return Response(status: .internalServerError)
+            }
+
             return Response(
                 status: .ok,
                 headers: [.contentType: "application/json"],

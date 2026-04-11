@@ -286,6 +286,21 @@ private struct TTSPreferencesTab: View {
                         }
 
                         HStack {
+                            Text("Stream Int.")
+                                .frame(width: 100, alignment: .leading)
+                            TextField(
+                                "0.25",
+                                value: $preferences.ttsStreamingInterval,
+                                formatter: NumberFormatter.decimal
+                            )
+                            .textFieldStyle(.roundedBorder)
+                            .frame(width: 80)
+                            Text("seconds per streamed TTS chunk")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+
+                        HStack {
                             Text("Gender")
                                 .frame(width: 100, alignment: .leading)
                             Picker("", selection: $preferences.ttsGender) {

@@ -62,6 +62,10 @@ final class PreferencesStore: ObservableObject {
         didSet { defaults.set(ttsGender, forKey: Keys.ttsGender) }
     }
 
+    @Published var ttsStreamingInterval: Double {
+        didSet { defaults.set(ttsStreamingInterval, forKey: Keys.ttsStreamingInterval) }
+    }
+
     private let defaults: UserDefaults
 
     private init(defaults: UserDefaults = .standard) {
@@ -80,6 +84,7 @@ final class PreferencesStore: ObservableObject {
             Keys.ttsLangCode: "german",
             Keys.ttsSpeed: 3.0,
             Keys.ttsGender: "male",
+            Keys.ttsStreamingInterval: 0.25,
         ])
 
         let port = defaults.integer(forKey: Keys.serverPort)
@@ -99,6 +104,8 @@ final class PreferencesStore: ObservableObject {
         let speed = defaults.double(forKey: Keys.ttsSpeed)
         ttsSpeed = speed == 0 ? 3.0 : speed
         ttsGender = defaults.string(forKey: Keys.ttsGender) ?? "male"
+        let streamingInterval = defaults.double(forKey: Keys.ttsStreamingInterval)
+        ttsStreamingInterval = streamingInterval == 0 ? 0.25 : streamingInterval
     }
 
     /// All hotwords including the wake word (if non-empty).
@@ -124,5 +131,6 @@ final class PreferencesStore: ObservableObject {
         static let ttsLangCode = "preferences.ttsLangCode"
         static let ttsSpeed = "preferences.ttsSpeed"
         static let ttsGender = "preferences.ttsGender"
+        static let ttsStreamingInterval = "preferences.ttsStreamingInterval"
     }
 }
