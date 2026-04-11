@@ -22,24 +22,38 @@ import { createWorkerRpcClient } from "../lib/rpc";
 import type { WorkerRpcApi } from "../worker-rpc";
 import { TalkingHead } from "@met4citizen/talkinghead";
 import { createVoiceDetector, VOICE_DETECTOR_DEFAULTS } from "defuss-vad";
-import type { VoiceDetector } from "defuss-vad";
+import type { VoiceDetector, VoiceDetectorOptions } from "defuss-vad";
 
 const TARGET_SAMPLE_RATE = 16000;
 const HOP_SIZE = 256;
 const PRE_ROLL_FRAMES = 10;
-const HANGOVER_FRAMES = 12;
+const END_OF_SPEECH_GRACE_MS = 480;
+const HANGOVER_FRAMES = Math.ceil(
+    ((END_OF_SPEECH_GRACE_MS / 1000) * TARGET_SAMPLE_RATE) / HOP_SIZE,
+);
 const VOICE_ACTIVITY_STREAM_DELAY_MS = 500;
 const VOICE_ACTIVITY_STREAM_DELAY_FRAMES = Math.ceil(
     ((VOICE_ACTIVITY_STREAM_DELAY_MS / 1000) * TARGET_SAMPLE_RATE) / HOP_SIZE,
 );
+const SHORT_UTTERANCE_FALLBACK_MIN_MS = 96;
+const SHORT_UTTERANCE_FALLBACK_MIN_FRAMES = Math.ceil(
+    ((SHORT_UTTERANCE_FALLBACK_MIN_MS / 1000) * TARGET_SAMPLE_RATE) / HOP_SIZE,
+);
 const MAX_LOG_LINES = 120;
 const MAX_OVERLAY_MESSAGES = 8;
-const STREAMING_PLACEHOLDER = "Listening...";
+const PCM_PACKET_DEBUG_INTERVAL = 10;
 const OVERLAY_MARKDOWN_PARSER_OPTIONS = Object.freeze({
     gfm: true,
     math: true,
     htmlTree: true,
     containers: true,
+});
+const VOICE_DETECTOR_TUNING: VoiceDetectorOptions = Object.freeze({
+    threshold: 0.64,
+    rmsFloor: 0.01,
+    debounceOn: 2,
+    debounceOff: 6,
+    hopSize: HOP_SIZE,
 });
 
 const HEALTH_URL = "http://localhost:31337/health";
@@ -48,6 +62,28 @@ const ASR_URL = "ws://localhost:31337/asr";
 const DEVICE_PREF_KEY = "__aidana_voice_agent_input_device";
 const MIC_PERMISSION_PREF_KEY = "__aidana_voice_agent_mic_permission";
 const AVATAR_PREF_KEY = "__aidana_voice_agent_avatar";
+const ASR_LANGUAGE_PREF_KEY = "__aidana_voice_agent_asr_language";
+
+const ASR_LANGUAGES = [
+    { id: "german", label: "German" },
+    { id: "auto", label: "Auto" },
+    { id: "english", label: "English" },
+    { id: "french", label: "French" },
+    { id: "spanish", label: "Spanish" },
+    { id: "italian", label: "Italian" },
+    { id: "dutch", label: "Dutch" },
+    { id: "portuguese", label: "Portuguese" },
+    { id: "polish", label: "Polish" },
+    { id: "swedish", label: "Swedish" },
+    { id: "danish", label: "Danish" },
+    { id: "finnish", label: "Finnish" },
+    { id: "czech", label: "Czech" },
+    { id: "greek", label: "Greek" },
+    { id: "hungarian", label: "Hungarian" },
+    { id: "romanian", label: "Romanian" },
+    { id: "russian", label: "Russian" },
+    { id: "turkish", label: "Turkish" },
+] as const;
 
 const AVATARS = [
     {
@@ -83,6 +119,8 @@ type OverlayMessage = {
     streaming: boolean;
 };
 
+type AsrLanguageId = (typeof ASR_LANGUAGES)[number]["id"];
+
 type VoiceDetectionResult = {
     isVoiceStable: boolean;
     rms: number;
@@ -97,6 +135,7 @@ type AgentState = {
     loadedAvatarId: string | null;
     microphones: MicrophoneOption[];
     selectedDeviceId: string | null;
+    selectedAsrLanguage: AsrLanguageId;
     detector: VoiceDetector | null;
     sessionActive: boolean;
     preparingSession: boolean;
@@ -123,6 +162,9 @@ type AgentState = {
     streamingUserMessageId: string | null;
     logLines: string[];
     currentLevel: number;
+    pcmPacketsSent: number;
+    asrTextPacketCount: number;
+    lastAsrPacketText: string;
     destroying: boolean;
 };
 
@@ -133,6 +175,7 @@ const state: AgentState = {
     loadedAvatarId: null,
     microphones: [],
     selectedDeviceId: null,
+    selectedAsrLanguage: ASR_LANGUAGES[0].id,
     detector: null,
     sessionActive: false,
     preparingSession: false,
@@ -159,6 +202,9 @@ const state: AgentState = {
     streamingUserMessageId: null,
     logLines: [],
     currentLevel: 0,
+    pcmPacketsSent: 0,
+    asrTextPacketCount: 0,
+    lastAsrPacketText: "",
     destroying: false,
 };
 
@@ -217,6 +263,16 @@ function syncAvatarSelect() {
     select.disabled = state.preparingSession;
 }
 
+function syncAsrLanguageSelect() {
+    const select = document.getElementById("asr-language-select") as HTMLSelectElement | null;
+    if (!select) {
+        return;
+    }
+
+    select.value = state.selectedAsrLanguage;
+    select.disabled = state.preparingSession;
+}
+
 function setStatus(
     title: string,
     description: string,
@@ -235,6 +291,47 @@ function appendLog(line: string) {
     const nextLine = `${timestamp}  ${line}`;
     state.logLines = [nextLine, ...state.logLines].slice(0, MAX_LOG_LINES);
     q<HTMLPreElement>("voice-log").textContent = state.logLines.join("\n");
+}
+
+function resetAsrDebugCounters() {
+    state.pcmPacketsSent = 0;
+    state.asrTextPacketCount = 0;
+    state.lastAsrPacketText = "";
+}
+
+function logAsrTokenDelta(nextText: string) {
+    const trimmedText = nextText.trim();
+    if (!trimmedText) {
+        return;
+    }
+
+    const previousText = state.lastAsrPacketText.trim();
+    if (previousText && trimmedText.startsWith(previousText)) {
+        const appendedText = trimmedText.slice(previousText.length).trim();
+        if (!appendedText) {
+            state.lastAsrPacketText = trimmedText;
+            return;
+        }
+
+        for (const token of appendedText.split(/\s+/)) {
+            console.debug("[voice-agent][asr<-][token]", token);
+        }
+        state.lastAsrPacketText = trimmedText;
+        return;
+    }
+
+    if (previousText && previousText !== trimmedText) {
+        console.debug("[voice-agent][asr<-][replace]", {
+            previous: previousText,
+            next: trimmedText,
+        });
+    }
+
+    for (const token of trimmedText.split(/\s+/)) {
+        console.debug("[voice-agent][asr<-][token]", token);
+    }
+
+    state.lastAsrPacketText = trimmedText;
 }
 
 function createOverlayMessageId() {
@@ -360,28 +457,27 @@ function renderOverlayMessages() {
     });
 }
 
-function ensureStreamingUserOverlay() {
-    if (state.streamingUserMessageId) {
+function syncStreamingUserOverlay(nextText = currentStreamingUtteranceText()) {
+    const displayText = nextText.trim();
+    if (!displayText) {
         return;
     }
 
-    const message: OverlayMessage = {
-        id: createOverlayMessageId(),
-        role: "user",
-        content: STREAMING_PLACEHOLDER,
-        createdAt: Date.now(),
-        streaming: true,
-    };
+    if (!state.streamingUserMessageId) {
+        const message: OverlayMessage = {
+            id: createOverlayMessageId(),
+            role: "user",
+            content: displayText,
+            createdAt: Date.now(),
+            streaming: true,
+        };
 
-    state.streamingUserMessageId = message.id;
-    state.overlayMessages = [...state.overlayMessages, message];
-    trimOverlayMessages();
-    renderOverlayMessages();
-}
-
-function syncStreamingUserOverlay() {
-    const nextText = currentStreamingUtteranceText() || STREAMING_PLACEHOLDER;
-    ensureStreamingUserOverlay();
+        state.streamingUserMessageId = message.id;
+        state.overlayMessages = [...state.overlayMessages, message];
+        trimOverlayMessages();
+        renderOverlayMessages();
+        return;
+    }
 
     const message = state.overlayMessages.find(
         (item) => item.id === state.streamingUserMessageId,
@@ -390,7 +486,7 @@ function syncStreamingUserOverlay() {
         return;
     }
 
-    message.content = nextText;
+    message.content = displayText;
     message.streaming = true;
     renderOverlayMessages();
 }
@@ -403,9 +499,15 @@ function finalizeStreamingUserOverlay(finalText: string) {
 
     if (!trimmedText) {
         if (message) {
-            state.overlayMessages = state.overlayMessages.filter(
-                (item) => item.id !== message.id,
-            );
+            const existingText = message.content.trim();
+            if (existingText) {
+                message.content = existingText;
+                message.streaming = false;
+            } else {
+                state.overlayMessages = state.overlayMessages.filter(
+                    (item) => item.id !== message.id,
+                );
+            }
         }
         state.streamingUserMessageId = null;
         renderOverlayMessages();
@@ -545,6 +647,7 @@ function renderSessionState() {
     q<HTMLButtonElement>("deactivate-session").disabled =
         !state.sessionActive && !state.awaitingFinal;
     syncAvatarSelect();
+    syncAsrLanguageSelect();
 }
 
 function rememberPrerollFrame(frame: Float32Array) {
@@ -559,6 +662,43 @@ function resetVoiceActivityGate() {
     state.stableVoiceFrames = 0;
 }
 
+function sendAsrPayload(payload: ArrayBuffer | string) {
+    if (!state.socket || state.socket.readyState !== WebSocket.OPEN) {
+        return false;
+    }
+
+    state.socket.send(payload);
+
+    if (payload instanceof ArrayBuffer) {
+        state.pcmPacketsSent += 1;
+        if (state.pcmPacketsSent % PCM_PACKET_DEBUG_INTERVAL === 0) {
+            console.debug("[voice-agent][asr->] sent PCM packets", {
+                count: state.pcmPacketsSent,
+                language: state.selectedAsrLanguage,
+                socketState: state.socketState,
+            });
+        }
+    } else {
+        console.debug("[voice-agent][asr->][control]", payload);
+    }
+
+    return true;
+}
+
+function createAsrControlMessage(payload: {
+    flush?: boolean;
+    language?: string;
+}) {
+    return JSON.stringify(payload);
+}
+
+function sendAsrLanguageConfig() {
+    const payload = createAsrControlMessage({ language: state.selectedAsrLanguage });
+    if (sendAsrPayload(payload)) {
+        appendLog(`ASR language hint sent: ${state.selectedAsrLanguage}.`);
+    }
+}
+
 function flushQueuedSocketPayloads() {
     if (!state.socket || state.socket.readyState !== WebSocket.OPEN) {
         return;
@@ -569,7 +709,7 @@ function flushQueuedSocketPayloads() {
         if (payload == null) {
             continue;
         }
-        state.socket.send(payload);
+        sendAsrPayload(payload);
     }
 }
 
@@ -578,6 +718,7 @@ function closeAsrSocket(closeCode = 1000, reason = "Session idle") {
     state.socket = null;
     state.websocketQueue = [];
     resetVoiceActivityGate();
+    resetAsrDebugCounters();
     state.utteranceActive = false;
     state.awaitingFinal = false;
     state.hangoverFramesRemaining = 0;
@@ -598,8 +739,7 @@ function closeAsrSocket(closeCode = 1000, reason = "Session idle") {
 function queueAsrFrame(frame: Float32Array) {
     const payload = frame.slice().buffer;
 
-    if (state.socket?.readyState === WebSocket.OPEN) {
-        state.socket.send(payload);
+    if (sendAsrPayload(payload)) {
         return;
     }
 
@@ -623,6 +763,15 @@ async function handleAsrMessage(rawData: unknown) {
     if (typeof data.text !== "string") {
         return;
     }
+
+    state.asrTextPacketCount += 1;
+    console.debug("[voice-agent][asr<-] packet", {
+        index: state.asrTextPacketCount,
+        confirmed: Boolean(data.confirmed),
+        done: Boolean(data.done),
+        text: data.text,
+    });
+    logAsrTokenDelta(data.text);
 
     if (data.done) {
         const finalText = data.text.trim();
@@ -655,7 +804,7 @@ async function handleAsrMessage(rawData: unknown) {
         state.volatileTranscript = data.text;
     }
 
-    syncStreamingUserOverlay();
+    syncStreamingUserOverlay(data.text);
     updateTranscriptPanels();
 }
 
@@ -678,6 +827,7 @@ function openAsrSocket() {
         }
 
         state.socketState = state.awaitingFinal ? "waiting" : "streaming";
+        sendAsrLanguageConfig();
         flushQueuedSocketPayloads();
         renderSessionState();
         appendLog("Aidana ASR websocket is open.");
@@ -733,22 +883,31 @@ function openAsrSocket() {
     };
 }
 
-function beginUtterance(bufferedFrames: Float32Array[] = state.prerollFrames) {
+function beginUtterance(
+    bufferedFrames: Float32Array[] = state.prerollFrames,
+    trigger: "stable-window" | "short-utterance" = "stable-window",
+) {
     if (!state.sessionActive || state.utteranceActive || state.awaitingFinal) {
         return;
     }
 
-    ensureStreamingUserOverlay();
     state.utteranceActive = true;
     state.awaitingFinal = false;
     state.hangoverFramesRemaining = HANGOVER_FRAMES;
     state.socketState = "connecting";
     state.websocketQueue = bufferedFrames.map((frame) => frame.slice().buffer);
     resetVoiceActivityGate();
+    resetAsrDebugCounters();
     renderSessionState();
-    appendLog(
-        `Voice stayed active for ${VOICE_ACTIVITY_STREAM_DELAY_MS}ms. Opening utterance stream.`,
-    );
+    if (trigger === "short-utterance") {
+        appendLog(
+            `Short utterance ended before ${VOICE_ACTIVITY_STREAM_DELAY_MS}ms. Replaying buffered audio to Aidana ASR.`,
+        );
+    } else {
+        appendLog(
+            `Voice stayed active for ${VOICE_ACTIVITY_STREAM_DELAY_MS}ms. Opening utterance stream.`,
+        );
+    }
     openAsrSocket();
 }
 
@@ -780,7 +939,7 @@ function maybeStartUtterance(frame: Float32Array, result: VoiceDetectionResult) 
     }
 
     if (!result.isVoiceStable) {
-        if (state.stableVoiceFrames > 0) {
+        if (state.stableVoiceFrames > 0 && !result.onVoiceEnd) {
             resetVoiceActivityGate();
         }
         return false;
@@ -797,7 +956,31 @@ function maybeStartUtterance(frame: Float32Array, result: VoiceDetectionResult) 
         return false;
     }
 
-    beginUtterance(state.pendingVoiceFrames);
+    beginUtterance(state.pendingVoiceFrames, "stable-window");
+    return true;
+}
+
+function flushBufferedShortUtterance() {
+    if (
+        !state.sessionActive ||
+        state.utteranceActive ||
+        state.awaitingFinal ||
+        state.pendingVoiceFrames.length === 0
+    ) {
+        resetVoiceActivityGate();
+        return false;
+    }
+
+    if (state.stableVoiceFrames < SHORT_UTTERANCE_FALLBACK_MIN_FRAMES) {
+        appendLog(
+            `Discarding buffered speech shorter than ${SHORT_UTTERANCE_FALLBACK_MIN_MS}ms.`,
+        );
+        resetVoiceActivityGate();
+        return false;
+    }
+
+    beginUtterance(state.pendingVoiceFrames, "short-utterance");
+    flushUtterance();
     return true;
 }
 
@@ -1082,6 +1265,9 @@ function handleVoiceFrame(frame: Float32Array, result: VoiceDetectionResult) {
     }
 
     if (result.onVoiceEnd) {
+        if (!state.utteranceActive && !startedUtterance) {
+            flushBufferedShortUtterance();
+        }
         renderSessionState();
     }
 
@@ -1122,9 +1308,9 @@ async function startVoiceSession(deviceId: string | null) {
 
         await Promise.all([ensureAvatarReady(), assertAsrReady()]);
 
-        state.detector = await createVoiceDetector();
+        state.detector = await createVoiceDetector(VOICE_DETECTOR_TUNING);
         appendLog(
-            `VoiceDetector ready (threshold ${VOICE_DETECTOR_DEFAULTS.threshold}, RMS floor ${VOICE_DETECTOR_DEFAULTS.rmsFloor}).`,
+            `VoiceDetector ready (threshold ${VOICE_DETECTOR_TUNING.threshold ?? VOICE_DETECTOR_DEFAULTS.threshold}, RMS floor ${VOICE_DETECTOR_TUNING.rmsFloor ?? VOICE_DETECTOR_DEFAULTS.rmsFloor}, debounce on ${VOICE_DETECTOR_TUNING.debounceOn ?? VOICE_DETECTOR_DEFAULTS.debounceOn}, debounce off ${VOICE_DETECTOR_TUNING.debounceOff ?? VOICE_DETECTOR_DEFAULTS.debounceOff}, end-of-speech grace ${END_OF_SPEECH_GRACE_MS}ms).`,
         );
 
         const audioCtx = new AudioContext();
@@ -1280,6 +1466,22 @@ async function changeMicrophone() {
 
     await WorkerRpc.setPrefValue(DEVICE_PREF_KEY, "", true);
     await startVoiceSession(null);
+}
+
+async function selectAsrLanguage(languageId: string) {
+    const nextLanguage = ASR_LANGUAGES.find((item) => item.id === languageId);
+    if (!nextLanguage || nextLanguage.id === state.selectedAsrLanguage) {
+        syncAsrLanguageSelect();
+        return;
+    }
+
+    state.selectedAsrLanguage = nextLanguage.id;
+    renderSessionState();
+    await WorkerRpc.setPrefValue(ASR_LANGUAGE_PREF_KEY, nextLanguage.id, true);
+
+    appendLog(
+        `ASR language hint set to ${nextLanguage.label}.${state.sessionActive ? " It will apply to the next utterance." : ""}`,
+    );
 }
 
 async function selectAvatar(avatarId: string) {
@@ -1461,13 +1663,24 @@ const App: FC = () => (
             <Card class="voice-stage-card">
                 <CardContent class="voice-stage-wrap p-5">
                     <div class="voice-stage-toolbar">
-                        <div class="voice-avatar-picker">
-                            <Label htmlFor="avatar-select">Avatar</Label>
-                            <select id="avatar-select" class="voice-device-select voice-avatar-select">
-                                {AVATARS.map((avatar) => (
-                                    <option value={avatar.id}>{avatar.label}</option>
-                                ))}
-                            </select>
+                        <div class="voice-stage-selectors">
+                            <div class="voice-avatar-picker">
+                                <Label htmlFor="avatar-select">Avatar</Label>
+                                <select id="avatar-select" class="voice-device-select voice-avatar-select">
+                                    {AVATARS.map((avatar) => (
+                                        <option value={avatar.id}>{avatar.label}</option>
+                                    ))}
+                                </select>
+                            </div>
+
+                            <div class="voice-avatar-picker">
+                                <Label htmlFor="asr-language-select">ASR Language</Label>
+                                <select id="asr-language-select" class="voice-device-select voice-avatar-select">
+                                    {ASR_LANGUAGES.map((language) => (
+                                        <option value={language.id}>{language.label}</option>
+                                    ))}
+                                </select>
+                            </div>
                         </div>
                     </div>
 
@@ -1516,6 +1729,11 @@ q<HTMLSelectElement>("avatar-select").addEventListener("change", (event) => {
     void selectAvatar(nextAvatarId);
 });
 
+q<HTMLSelectElement>("asr-language-select").addEventListener("change", (event) => {
+    const nextLanguageId = (event.currentTarget as HTMLSelectElement).value;
+    void selectAsrLanguage(nextLanguageId);
+});
+
 updateTranscriptPanels();
 renderOverlayMessages();
 updateLevelIndicator();
@@ -1532,6 +1750,14 @@ if (
     AVATARS.some((avatar) => avatar.id === savedAvatar)
 ) {
     state.currentAvatarId = savedAvatar;
+}
+
+const savedAsrLanguage = await WorkerRpc.getPrefValue(ASR_LANGUAGE_PREF_KEY, true);
+if (
+    typeof savedAsrLanguage === "string" &&
+    ASR_LANGUAGES.some((language) => language.id === savedAsrLanguage)
+) {
+    state.selectedAsrLanguage = savedAsrLanguage as AsrLanguageId;
 }
 
 const savedPermission = await WorkerRpc.getPrefValue(MIC_PERMISSION_PREF_KEY, true);

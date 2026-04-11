@@ -18,6 +18,12 @@ enum ASRWebSocketHandler {
         let done: Bool
     }
 
+    /// JSON control message received from WebSocket clients.
+    struct ASRControlJSON: Codable, Sendable {
+        let flush: Bool?
+        let language: String?
+    }
+
     /// Decode a binary WebSocket frame to Float32 PCM samples.
     static func decodePCMFrame(_ data: Data) -> [Float] {
         let count = data.count / MemoryLayout<Float>.size
@@ -46,5 +52,11 @@ enum ASRWebSocketHandler {
     static func encodeResult(_ result: ASRResultJSON) throws -> String {
         let data = try JSONEncoder().encode(result)
         return String(data: data, encoding: .utf8) ?? "{}"
+    }
+
+    /// Decode a text control frame from the client.
+    static func decodeControl(_ text: String) -> ASRControlJSON? {
+        guard let data = text.data(using: .utf8) else { return nil }
+        return try? JSONDecoder().decode(ASRControlJSON.self, from: data)
     }
 }

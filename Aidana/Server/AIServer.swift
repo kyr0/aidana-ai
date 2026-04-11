@@ -88,11 +88,21 @@ actor AIServer {
                 return
             }
 
-            // Create a per-connection streaming manager (1s hypothesis updates)
-            let streamingManager = StreamingAsrManager(config: .streaming)
+            // Favor low-latency hypotheses so the browser extension can render
+            // streaming text while speech is still in progress.
+            let streamingConfig = StreamingAsrConfig(
+                chunkSeconds: 11.0,
+                hypothesisChunkSeconds: 0.25,
+                leftContextSeconds: 2.0,
+                rightContextSeconds: 0.25,
+                minContextForConfirmation: 8.0,
+                confirmationThreshold: 0.82
+            )
+            let streamingManager = StreamingAsrManager(config: streamingConfig)
+            var requestedLanguage = "auto"
 
             reqLogger.info("ASR WebSocket connected")
-            logFn?("ASR client connected")
+            logFn?("ASR client connected (250ms hypothesis cadence)")
 
             // Listening mode: idle (wake word detection) vs active (sending results)
             var isActive = false
@@ -136,7 +146,7 @@ actor AIServer {
                     group.addTask {
                         for try await message in inbound.messages(maxSize: 1 << 24) {
                             switch message {
-                            case .binary(var byteBuffer):
+                            case .binary(let byteBuffer):
                                 let data = Data(buffer: byteBuffer)
                                 let samples = ASRWebSocketHandler.decodePCMFrame(data)
                                 if !samples.isEmpty,
@@ -144,6 +154,24 @@ actor AIServer {
                                     await streamingManager.streamAudio(buffer)
                                 }
                             case .text(let text):
+                                if let control = ASRWebSocketHandler.decodeControl(text) {
+                                    if let language = control.language?
+                                        .trimmingCharacters(in: .whitespacesAndNewlines), !language.isEmpty
+                                    {
+                                        requestedLanguage = language
+                                        reqLogger.info("ASR language hint updated to \(requestedLanguage)")
+                                        logFn?("ASR language hint: \(requestedLanguage)")
+                                    }
+
+                                    if control.flush == true {
+                                        _ = try await streamingManager.finish()
+                                        await streamingManager.cancel()
+                                        return
+                                    }
+
+                                    continue
+                                }
+
                                 if text.contains("\"flush\"") {
                                     _ = try await streamingManager.finish()
                                     await streamingManager.cancel()
@@ -163,6 +191,7 @@ actor AIServer {
                             let fullText = await buildFullText(streamingManager)
                             guard fullText != lastSentText, !fullText.isEmpty else { continue }
                             lastSentText = fullText
+                            let updateType = update.isConfirmed ? "CONFIRMED" : "PARTIAL"
 
                             let wakeWord = (wakeWordFn?() ?? "").lowercased()
 
@@ -173,7 +202,8 @@ actor AIServer {
                                     text: fullText, confirmed: update.isConfirmed, done: false)
                                 let json = try ASRWebSocketHandler.encodeResult(result)
                                 try await outbound.write(.text(json))
-                                logFn?("ASR: \(fullText)")
+                                reqLogger.debug("[\(updateType)] \(fullText)")
+                                logFn?("ASR \(updateType) [\(requestedLanguage)]: \(fullText)")
                                 continue
                             }
 
@@ -185,7 +215,8 @@ actor AIServer {
                                         text: textToSend, confirmed: update.isConfirmed, done: false)
                                     let json = try ASRWebSocketHandler.encodeResult(result)
                                     try await outbound.write(.text(json))
-                                    logFn?("ASR: \(textToSend)")
+                                    reqLogger.debug("[\(updateType)] \(textToSend)")
+                                    logFn?("ASR \(updateType) [\(requestedLanguage)]: \(textToSend)")
                                 }
                                 continue
                             }
@@ -200,7 +231,8 @@ actor AIServer {
                                         text: afterText, confirmed: update.isConfirmed, done: false)
                                     let json = try ASRWebSocketHandler.encodeResult(result)
                                     try await outbound.write(.text(json))
-                                    logFn?("ASR: \(afterText)")
+                                    reqLogger.debug("[\(updateType)] \(afterText)")
+                                    logFn?("ASR \(updateType) [\(requestedLanguage)]: \(afterText)")
                                 }
                             } else {
                                 logFn?("IDLE: \(fullText)")
