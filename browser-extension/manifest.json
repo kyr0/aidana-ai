@@ -1,0 +1,80 @@
+{
+  "name": "aidana-agent",
+  "version": "0.0.1",
+  "manifest_version": 3,
+  "description": "Aidana Agent browser extension with a dedicated local voice session window, on-device ASR integration, and browser automation tooling.",
+  "icons": {
+    "16": "icons/icon.png",
+    "32": "icons/icon.png",
+    "48": "icons/icon.png",
+    "128": "icons/icon.png"
+  },
+  "action": {
+    "default_title": "Aidana Agent",
+    "default_popup": "src/popup/popup.html"
+  },
+  "content_scripts": [
+    {
+      "run_at": "document_start",
+      "matches": ["http://*/*", "https://*/*", "file://*/*"],
+      "css": ["src/tab-preload-border.css"],
+      "js": ["src/tab-preload.ts"],
+      "all_frames": true,
+      "match_origin_as_fallback": false,
+      "match_about_blank": false,
+      "world": "MAIN"
+    },
+    {
+      "matches": ["http://*/*", "https://*/*", "file://*/*"],
+      "js": ["src/tab.ts"],
+      "all_frames": false,
+      "match_origin_as_fallback": false,
+      "match_about_blank": false,
+      "run_at": "document_idle",
+      "world": "ISOLATED"
+    }
+  ],
+  "host_permissions": ["*://*/*", "http://127.0.0.1/*", "http://localhost/*"],
+  "permissions": [
+    "webRequest",
+    "scripting",
+    "tabs",
+    "activeTab",
+    "storage",
+    "unlimitedStorage",
+    "offscreen",
+    "alarms",
+    "cookies",
+    "browsingData"
+  ],
+  "background": {
+    "service_worker": "src/worker.ts",
+    "type": "module"
+  },
+  "content_security_policy": {
+    "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'; connect-src 'self' http://localhost:* http://127.0.0.1:* ws://localhost:* ws://127.0.0.1:*;"
+  },
+  "incognito": "split",
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "src/offscreen/keepalive.html",
+        "src/offscreen/keepalive.js"
+      ],
+      "matches": ["<all_urls>"],
+      "use_dynamic_url": false
+    },
+    {
+      "resources": ["dist/*"],
+      "matches": ["http://*/*", "https://*/*", "file://*/*"]
+    },
+    {
+      "resources": ["fonts/*"],
+      "matches": ["http://*/*", "https://*/*", "file://*/*"]
+    },
+    {
+      "resources": ["models/*"],
+      "matches": ["http://*/*", "https://*/*", "file://*/*"]
+    }
+  ]
+}

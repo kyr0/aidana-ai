@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "aidana-agent": {
+      "command": "bun",
+      "args": ["run", "mcp"],
+      "cwd": "."
+    }
+  }
+}
