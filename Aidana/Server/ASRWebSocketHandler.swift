@@ -22,6 +22,8 @@ enum ASRWebSocketHandler {
     struct ASRControlJSON: Codable, Sendable {
         let flush: Bool?
         let language: String?
+        let ignoreWakeWord: Bool?
+        let consecutive: Bool?
     }
 
     /// Decode a binary WebSocket frame to Float32 PCM samples.

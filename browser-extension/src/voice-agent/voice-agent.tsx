@@ -31,7 +31,7 @@ const END_OF_SPEECH_GRACE_MS = 480;
 const HANGOVER_FRAMES = Math.ceil(
     ((END_OF_SPEECH_GRACE_MS / 1000) * TARGET_SAMPLE_RATE) / HOP_SIZE,
 );
-const VOICE_ACTIVITY_STREAM_DELAY_MS = 500;
+const VOICE_ACTIVITY_STREAM_DELAY_MS = 320;
 const VOICE_ACTIVITY_STREAM_DELAY_FRAMES = Math.ceil(
     ((VOICE_ACTIVITY_STREAM_DELAY_MS / 1000) * TARGET_SAMPLE_RATE) / HOP_SIZE,
 );
@@ -165,6 +165,7 @@ type AgentState = {
     pcmPacketsSent: number;
     asrTextPacketCount: number;
     lastAsrPacketText: string;
+    overlayAutoScrollPinned: boolean;
     destroying: boolean;
 };
 
@@ -205,6 +206,7 @@ const state: AgentState = {
     pcmPacketsSent: 0,
     asrTextPacketCount: 0,
     lastAsrPacketText: "",
+    overlayAutoScrollPinned: true,
     destroying: false,
 };
 
@@ -293,6 +295,17 @@ function appendLog(line: string) {
     q<HTMLPreElement>("voice-log").textContent = state.logLines.join("\n");
 }
 
+function traceVoiceAgent(event: string, payload?: unknown) {
+    const timestamp = new Date().toISOString();
+
+    if (payload === undefined) {
+        console.log(`[voice-agent] ${timestamp} ${event}`);
+        return;
+    }
+
+    console.log(`[voice-agent] ${timestamp} ${event}`, payload);
+}
+
 function resetAsrDebugCounters() {
     state.pcmPacketsSent = 0;
     state.asrTextPacketCount = 0;
@@ -314,21 +327,21 @@ function logAsrTokenDelta(nextText: string) {
         }
 
         for (const token of appendedText.split(/\s+/)) {
-            console.debug("[voice-agent][asr<-][token]", token);
+            traceVoiceAgent("asr<- token", token);
         }
         state.lastAsrPacketText = trimmedText;
         return;
     }
 
     if (previousText && previousText !== trimmedText) {
-        console.debug("[voice-agent][asr<-][replace]", {
+        traceVoiceAgent("asr<- replace", {
             previous: previousText,
             next: trimmedText,
         });
     }
 
     for (const token of trimmedText.split(/\s+/)) {
-        console.debug("[voice-agent][asr<-][token]", token);
+        traceVoiceAgent("asr<- token", token);
     }
 
     state.lastAsrPacketText = trimmedText;
@@ -367,9 +380,18 @@ function currentStreamingUtteranceText() {
     return confirmed || volatile;
 }
 
-function scrollOverlayToLatest() {
+function isOverlayNearBottom(scrollHost: HTMLDivElement) {
+    const remaining = scrollHost.scrollHeight - scrollHost.clientHeight - scrollHost.scrollTop;
+    return remaining <= 24;
+}
+
+function scrollOverlayToLatest(force = false) {
     const scrollHost = document.getElementById("voice-overlay-scroll") as HTMLDivElement | null;
     if (!scrollHost) {
+        return;
+    }
+
+    if (!force && !state.overlayAutoScrollPinned) {
         return;
     }
 
@@ -672,14 +694,14 @@ function sendAsrPayload(payload: ArrayBuffer | string) {
     if (payload instanceof ArrayBuffer) {
         state.pcmPacketsSent += 1;
         if (state.pcmPacketsSent % PCM_PACKET_DEBUG_INTERVAL === 0) {
-            console.debug("[voice-agent][asr->] sent PCM packets", {
+            traceVoiceAgent("asr-> sent PCM packets", {
                 count: state.pcmPacketsSent,
                 language: state.selectedAsrLanguage,
                 socketState: state.socketState,
             });
         }
     } else {
-        console.debug("[voice-agent][asr->][control]", payload);
+        traceVoiceAgent("asr-> control", payload);
     }
 
     return true;
@@ -688,14 +710,20 @@ function sendAsrPayload(payload: ArrayBuffer | string) {
 function createAsrControlMessage(payload: {
     flush?: boolean;
     language?: string;
+    ignoreWakeWord?: boolean;
+    consecutive?: boolean;
 }) {
     return JSON.stringify(payload);
 }
 
 function sendAsrLanguageConfig() {
-    const payload = createAsrControlMessage({ language: state.selectedAsrLanguage });
+    const payload = createAsrControlMessage({
+        language: state.selectedAsrLanguage,
+        ignoreWakeWord: true,
+        consecutive: true,
+    });
     if (sendAsrPayload(payload)) {
-        appendLog(`ASR language hint sent: ${state.selectedAsrLanguage}.`);
+        appendLog(`ASR language hint sent: ${state.selectedAsrLanguage} (wake word bypass, consecutive mode).`);
     }
 }
 
@@ -765,7 +793,7 @@ async function handleAsrMessage(rawData: unknown) {
     }
 
     state.asrTextPacketCount += 1;
-    console.debug("[voice-agent][asr<-] packet", {
+    traceVoiceAgent("asr<- packet", {
         index: state.asrTextPacketCount,
         confirmed: Boolean(data.confirmed),
         done: Boolean(data.done),
@@ -819,6 +847,10 @@ function openAsrSocket() {
     state.socketState = "connecting";
     renderSessionState();
     appendLog("Opening Aidana ASR websocket.");
+    traceVoiceAgent("asr socket opening", {
+        url: ASR_URL,
+        language: state.selectedAsrLanguage,
+    });
 
     socket.onopen = () => {
         if (state.socket !== socket) {
@@ -831,16 +863,22 @@ function openAsrSocket() {
         flushQueuedSocketPayloads();
         renderSessionState();
         appendLog("Aidana ASR websocket is open.");
+        traceVoiceAgent("asr socket open", {
+            awaitingFinal: state.awaitingFinal,
+            queuedPayloads: state.websocketQueue.length,
+        });
     };
 
     socket.onmessage = (event) => {
         void handleAsrMessage(event.data);
     };
 
-    socket.onerror = () => {
+    socket.onerror = (event) => {
         if (state.socket !== socket) {
             return;
         }
+
+        traceVoiceAgent("asr socket error", event);
 
         finalizeStreamingUserOverlay(currentStreamingUtteranceText());
         state.asrHealthy = false;
@@ -862,6 +900,12 @@ function openAsrSocket() {
         if (!wasCurrentSocket) {
             return;
         }
+
+        traceVoiceAgent("asr socket close", {
+            code: event.code,
+            reason: event.reason,
+            wasClean: event.wasClean,
+        });
 
         state.socket = null;
         state.websocketQueue = [];
@@ -898,7 +942,13 @@ function beginUtterance(
     state.websocketQueue = bufferedFrames.map((frame) => frame.slice().buffer);
     resetVoiceActivityGate();
     resetAsrDebugCounters();
+    state.overlayAutoScrollPinned = true;
     renderSessionState();
+    traceVoiceAgent("utterance started", {
+        trigger,
+        bufferedFrames: bufferedFrames.length,
+        streamDelayMs: VOICE_ACTIVITY_STREAM_DELAY_MS,
+    });
     if (trigger === "short-utterance") {
         appendLog(
             `Short utterance ended before ${VOICE_ACTIVITY_STREAM_DELAY_MS}ms. Replaying buffered audio to Aidana ASR.`,
@@ -923,14 +973,20 @@ function flushUtterance() {
         ? "waiting"
         : "connecting";
 
-    if (state.socket?.readyState === WebSocket.OPEN) {
-        state.socket.send(JSON.stringify({ flush: true }));
+    traceVoiceAgent("utterance flushing", {
+        pcmPacketsSent: state.pcmPacketsSent,
+        asrTextPacketCount: state.asrTextPacketCount,
+    });
+
+    const flushPayload = JSON.stringify({ flush: true });
+    if (sendAsrPayload(flushPayload)) {
+        appendLog("Voice end detected. Flushing utterance to Aidana ASR.");
     } else {
-        state.websocketQueue.push(JSON.stringify({ flush: true }));
+        state.websocketQueue.push(flushPayload);
+        appendLog("Voice end detected. Queueing utterance flush for Aidana ASR.");
     }
 
     renderSessionState();
-    appendLog("Voice end detected. Flushing utterance to Aidana ASR.");
 }
 
 function maybeStartUtterance(frame: Float32Array, result: VoiceDetectionResult) {
@@ -1738,6 +1794,11 @@ updateTranscriptPanels();
 renderOverlayMessages();
 updateLevelIndicator();
 renderSessionState();
+
+const overlayScrollHost = document.getElementById("voice-overlay-scroll") as HTMLDivElement | null;
+overlayScrollHost?.addEventListener("scroll", () => {
+    state.overlayAutoScrollPinned = isOverlayNearBottom(overlayScrollHost);
+});
 
 const savedDevice = await WorkerRpc.getPrefValue(DEVICE_PREF_KEY, true);
 if (typeof savedDevice === "string" && savedDevice.length > 0) {
