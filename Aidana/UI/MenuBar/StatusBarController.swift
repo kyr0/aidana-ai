@@ -160,4 +160,7 @@ final class StatusBarController {
 extension Notification.Name {
     static let statusBarLogRequested = Notification.Name("com.aidana.statusBarLogRequested")
     static let statusBarPreferencesRequested = Notification.Name("com.aidana.statusBarPreferencesRequested")
+    static let mcpStartRequested = Notification.Name("com.aidana.mcpStartRequested")
+    static let mcpStopRequested = Notification.Name("com.aidana.mcpStopRequested")
+    static let mcpRestartRequested = Notification.Name("com.aidana.mcpRestartRequested")
 }

@@ -25,6 +25,7 @@ import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
 import { createMcpProtocolServer } from "./src/server/mcp-protocol.js";
 import { runtimeConfig } from "./src/server/runtime-config.js";
 import { server as workQueueServer } from "./src/server/server.js";
+import { ensureWorkspacePathExists } from "./src/server/file-ops.js";
 
 type HttpSession = {
   server: Server;
@@ -208,6 +209,9 @@ async function startStdioTransport(): Promise<void> {
 
 // -- Start ------------------------------------------------------------------
 async function main(): Promise<void> {
+  await ensureWorkspacePathExists();
+  console.error(`[mcp] workspace ready at ${runtimeConfig.workspacePath}`);
+
   await workQueueServer.start();
   console.error(
     `[mcp] work-queue running on ${runtimeConfig.workQueueEndpoint} workspace=${runtimeConfig.workspacePath}`,

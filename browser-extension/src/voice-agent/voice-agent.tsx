@@ -21,6 +21,12 @@ import {
 import { createWorkerRpcClient } from "../lib/rpc";
 import type { WorkerRpcApi } from "../worker-rpc";
 import { TalkingHead } from "@met4citizen/talkinghead";
+// @ts-ignore Upstream package does not ship declarations for these module entrypoints.
+import { LipsyncDe } from "@met4citizen/talkinghead/modules/lipsync-de.mjs";
+// @ts-ignore Upstream package does not ship declarations for these module entrypoints.
+import { LipsyncEn } from "@met4citizen/talkinghead/modules/lipsync-en.mjs";
+// @ts-ignore Upstream package does not ship declarations for these module entrypoints.
+import { LipsyncFr } from "@met4citizen/talkinghead/modules/lipsync-fr.mjs";
 import { createVoiceDetector, VOICE_DETECTOR_DEFAULTS } from "defuss-vad";
 import type { VoiceDetector, VoiceDetectorOptions } from "defuss-vad";
 
@@ -89,6 +95,20 @@ const ASR_LANGUAGES = [
     { id: "russian", label: "Russian" },
     { id: "turkish", label: "Turkish" },
 ] as const;
+
+const TALKING_HEAD_LIPSYNC_LANGS = Object.freeze({
+    german: "de",
+    deutsch: "de",
+    de: "de",
+    "de-de": "de",
+    english: "en",
+    en: "en",
+    "en-us": "en",
+    "en-gb": "en",
+    french: "fr",
+    fr: "fr",
+    "fr-fr": "fr",
+} as const);
 
 const AVATARS = [
     {
@@ -202,6 +222,7 @@ type AgentState = {
     ttsChunkRemainder: Uint8Array;
     ttsAbortController: AbortController | null;
     ttsOutputNode: GainNode | null;
+    ttsAnalyserNode: AnalyserNode | null;
     ttsScheduledSources: Set<AudioBufferSourceNode>;
     overlayAutoScrollPinned: boolean;
     destroying: boolean;
@@ -256,6 +277,7 @@ const state: AgentState = {
     ttsChunkRemainder: new Uint8Array(0),
     ttsAbortController: null,
     ttsOutputNode: null,
+    ttsAnalyserNode: null,
     ttsScheduledSources: new Set<AudioBufferSourceNode>(),
     overlayAutoScrollPinned: true,
     destroying: false,
@@ -268,6 +290,7 @@ let currentMouthValue = 0;
 let animationLoopStarted = false;
 let overlayMarkdownDisabled = false;
 let ttsConfigPromise: Promise<TTSConfig> | null = null;
+let ttsAnalyserSamples: Uint8Array<ArrayBuffer> | null = null;
 
 function q<T extends HTMLElement>(id: string): T {
     const element = document.getElementById(id);
@@ -504,21 +527,23 @@ function renderOverlayMessages() {
                     <div
                         class={`voice-overlay-bubble ${message.role === "user" ? "is-user" : "is-assistant"} ${message.streaming ? "is-streaming" : ""}`}
                     >
+                        <div class="voice-overlay-sender">
+                            {message.role === "user" ? "YOU" : "AIDANA"}
+                        </div>
                         <div
                             class="voice-overlay-markdown"
                             data-overlay-msg-id={message.id}
                         >
                             {message.content}
                         </div>
-                        <div class="voice-overlay-meta">
-                            <span>{message.role === "user" ? "You" : "Aidana"}</span>
+                        <div class="voice-overlay-footer">
+                            {message.streaming ? <span class="voice-overlay-live">Live</span> : null}
                             <span>
                                 {new Date(message.createdAt).toLocaleTimeString([], {
                                     hour: "2-digit",
                                     minute: "2-digit",
                                 })}
                             </span>
-                            {message.streaming ? <span>Live</span> : null}
                         </div>
                     </div>
                 </div>
@@ -687,6 +712,90 @@ function normalizeTtsInput(text: string) {
     return text.replace(/\s+/g, " ").trim();
 }
 
+function currentTalkingHeadLipsyncLang(config: TTSConfig | null = state.ttsConfig) {
+    const candidates = [
+        config?.langCode,
+        state.selectedAsrLanguage,
+        navigator.language,
+    ];
+
+    for (const candidate of candidates) {
+        const value = String(candidate ?? "").trim().toLowerCase().replace(/_/g, "-");
+        if (!value) {
+            continue;
+        }
+
+        if (value in TALKING_HEAD_LIPSYNC_LANGS) {
+            return TALKING_HEAD_LIPSYNC_LANGS[value as keyof typeof TALKING_HEAD_LIPSYNC_LANGS];
+        }
+
+        if (value.startsWith("de")) {
+            return "de";
+        }
+        if (value.startsWith("en")) {
+            return "en";
+        }
+        if (value.startsWith("fr")) {
+            return "fr";
+        }
+    }
+
+    return "de";
+}
+
+function ensureTalkingHeadLipsyncModules(head: any) {
+    if (!head?.lipsync) {
+        return;
+    }
+
+    if (!head.lipsync.de) {
+        head.lipsync.de = new LipsyncDe();
+    }
+    if (!head.lipsync.en) {
+        head.lipsync.en = new LipsyncEn();
+    }
+    if (!head.lipsync.fr) {
+        head.lipsync.fr = new LipsyncFr();
+    }
+}
+
+function buildApproximateTtsWordTimeline(text: string, config: TTSConfig) {
+    const words = text.match(/\S+/g) ?? [];
+    if (words.length === 0) {
+        return null;
+    }
+
+    const speedFactor = Math.max(0.72, Math.min(1.32, 1 + (3 - config.speed) * 0.18));
+    let cursorMs = 0;
+    const wtimes: number[] = [];
+    const wdurations: number[] = [];
+
+    for (const word of words) {
+        const stripped = word.replace(/[^\p{L}\p{N}]/gu, "");
+        const symbolCount = Math.max(1, stripped.length || word.length);
+        const trailingPause = /[.!?]$/.test(word)
+            ? 220
+            : /[,;:]$/.test(word)
+                ? 120
+                : 45;
+        const durationMs = Math.max(
+            110,
+            Math.round((symbolCount * 58 + trailingPause) * speedFactor),
+        );
+
+        wtimes.push(cursorMs);
+        wdurations.push(durationMs);
+        cursorMs += durationMs;
+    }
+
+    return {
+        words,
+        wtimes,
+        wdurations,
+        estimatedDurationMs: cursorMs,
+    };
+}
+
 function currentTtsUrl() {
     const port = state.ttsConfig?.port ?? DEFAULT_TTS_PORT;
     return `http://localhost:${port}/v1/audio/speech`;
@@ -698,8 +807,7 @@ function ttsSampleRate() {
 
 function hasPendingTtsWork() {
     return state.ttsRequestActive ||
-        state.ttsPendingChunks.length > 0 ||
-        state.ttsScheduledSources.size > 0 ||
+    state.ttsPlaying ||
         state.ttsQueue.length > 0;
 }
 
@@ -770,6 +878,10 @@ function releaseTtsGateIfIdle() {
         setListeningStatus();
         appendLog("TTS playback drained. ASR capture resumed.");
     }
+
+    if (state.sessionActive && state.ttsQueue.length > 0) {
+        void pumpTtsQueue();
+    }
 }
 
 function stopTtsPlayback(reason: string) {
@@ -785,6 +897,14 @@ function stopTtsPlayback(reason: string) {
         controller.abort();
     }
 
+    try {
+        state.head?.streamStop?.();
+    } catch { }
+
+    try {
+        state.head?.stopSpeaking?.();
+    } catch { }
+
     stopScheduledTtsSources();
     resetTtsPendingBuffers();
 
@@ -793,6 +913,14 @@ function stopTtsPlayback(reason: string) {
             state.ttsOutputNode.disconnect();
         } catch { }
         state.ttsOutputNode = null;
+    }
+
+    if (state.ttsAnalyserNode) {
+        try {
+            state.ttsAnalyserNode.disconnect();
+        } catch { }
+        state.ttsAnalyserNode = null;
+        ttsAnalyserSamples = null;
     }
 
     finalizeAssistantOverlayStreaming();
@@ -908,12 +1036,46 @@ function ensureTtsOutputNode() {
 
     if (!state.ttsOutputNode) {
         const outputNode = audioCtx.createGain();
+        const analyserNode = audioCtx.createAnalyser();
         outputNode.gain.value = 1;
-        outputNode.connect(audioCtx.destination);
+        analyserNode.fftSize = 1024;
+        analyserNode.smoothingTimeConstant = 0.2;
+        outputNode.connect(analyserNode);
+        analyserNode.connect(audioCtx.destination);
         state.ttsOutputNode = outputNode;
+        state.ttsAnalyserNode = analyserNode;
+        ttsAnalyserSamples = null;
     }
 
     return state.ttsOutputNode;
+}
+
+function currentTtsPlaybackLevel() {
+    const analyserNode = state.ttsAnalyserNode;
+    if (!analyserNode) {
+        return 0;
+    }
+
+    if (!ttsAnalyserSamples || ttsAnalyserSamples.length !== analyserNode.fftSize) {
+        ttsAnalyserSamples = new Uint8Array(new ArrayBuffer(analyserNode.fftSize));
+    }
+
+    analyserNode.getByteTimeDomainData(ttsAnalyserSamples);
+
+    let peak = 0;
+    let sumSquares = 0;
+    for (let index = 0; index < ttsAnalyserSamples.length; index += 1) {
+        const sample = ((ttsAnalyserSamples[index] ?? 128) - 128) / 128;
+        const magnitude = Math.abs(sample);
+        if (magnitude > peak) {
+            peak = magnitude;
+        }
+        sumSquares += sample * sample;
+    }
+
+    const rms = Math.sqrt(sumSquares / ttsAnalyserSamples.length);
+    const level = Math.min(1, Math.max(rms * 5.4, peak * 1.35));
+    return level < 0.035 ? 0 : level;
 }
 
 function scheduleTtsChunk(samples: Float32Array, sampleRate: number) {
@@ -1012,7 +1174,7 @@ function enqueueTtsSamples(samples: Float32Array) {
     flushTtsPlaybackQueue(false);
 }
 
-function ingestTtsPcmBytes(chunk: Uint8Array) {
+function ingestTtsPcmBytes(chunk: Uint8Array, head: any) {
     const combined = state.ttsChunkRemainder.length > 0
         ? appendUint8Arrays(state.ttsChunkRemainder, chunk)
         : chunk;
@@ -1020,12 +1182,13 @@ function ingestTtsPcmBytes(chunk: Uint8Array) {
     const evenLength = combined.length - (combined.length % 2);
     if (evenLength <= 0) {
         state.ttsChunkRemainder = combined.slice();
-        return;
+        return 0;
     }
 
     const pcmBytes = combined.subarray(0, evenLength);
     state.ttsChunkRemainder = combined.slice(evenLength);
-    enqueueTtsSamples(decodeTtsPcm16Le(pcmBytes));
+    head.streamAudio({ audio: pcmBytes });
+    return pcmBytes.byteLength;
 }
 
 function buildTtsRequestPayload(text: string, config: TTSConfig) {
@@ -1062,16 +1225,54 @@ async function streamTtsJob(job: TTSQueueItem) {
         }
 
         const config = await loadTtsConfig();
-        if (!state.audioCtx) {
-            throw new Error("Voice session audio is not ready for TTS playback.");
+        await ensureAvatarReady();
+
+        const head = state.head;
+        if (!head) {
+            throw new Error("TalkingHead avatar is not ready for TTS playback.");
         }
 
-        await state.audioCtx.resume();
         activateTtsGate();
         state.ttsRequestActive = true;
         state.ttsAbortController = new AbortController();
         state.ttsChunkRemainder = new Uint8Array(0);
         renderSessionState();
+
+        const lipsyncLang = currentTalkingHeadLipsyncLang(config);
+        const wordTimeline = buildApproximateTtsWordTimeline(normalizedText, config);
+
+        await head.streamStart(
+            {
+                sampleRate: config.sampleRate,
+                lipsyncLang,
+                lipsyncType: "words",
+                waitForAudioChunks: true,
+                gain: 1,
+            },
+            () => {
+                state.ttsPlaying = true;
+                renderSessionState();
+            },
+            () => {
+                state.ttsPlaying = false;
+                try {
+                    head.streamStop?.();
+                } catch { }
+                renderSessionState();
+                releaseTtsGateIfIdle();
+            },
+        );
+
+        if (wordTimeline) {
+            head.streamAudio({
+                words: wordTimeline.words,
+                wtimes: wordTimeline.wtimes,
+                wdurations: wordTimeline.wdurations,
+            });
+            appendLog(
+                `TalkingHead lipsync queued for ${wordTimeline.words.length} words (${wordTimeline.estimatedDurationMs}ms estimated).`,
+            );
+        }
 
         overlayMessageId = appendOverlayMessage("assistant", normalizedText, true);
 
@@ -1106,6 +1307,7 @@ async function streamTtsJob(job: TTSQueueItem) {
         const reader = response.body.getReader();
         let packetCount = 0;
         let totalBytes = 0;
+        let streamedPcmBytes = 0;
         let firstPacketLogged = false;
 
         while (true) {
@@ -1135,12 +1337,12 @@ async function streamTtsJob(job: TTSQueueItem) {
                 traceVoiceAgent("tts<- pcm", {
                     packetCount,
                     totalBytes,
-                    bufferedMs: Math.round(state.ttsPendingSeconds * 1000),
-                    scheduledChunks: state.ttsScheduledSources.size,
+                    streamedMs: Math.round((streamedPcmBytes / 2 / config.sampleRate) * 1000),
+                    playing: state.ttsPlaying,
                 });
             }
 
-            ingestTtsPcmBytes(value);
+            streamedPcmBytes += ingestTtsPcmBytes(value, head);
         }
 
         if (state.ttsChunkRemainder.length > 0) {
@@ -1150,7 +1352,7 @@ async function streamTtsJob(job: TTSQueueItem) {
             state.ttsChunkRemainder = new Uint8Array(0);
         }
 
-        flushTtsPlaybackQueue(true);
+        head.streamNotifyEnd();
         appendLog(`TTS stream finished (${packetCount} PCM packets, ${totalBytes} bytes).`);
     } catch (error) {
         if (error instanceof DOMException && error.name === "AbortError") {
@@ -1171,7 +1373,7 @@ async function streamTtsJob(job: TTSQueueItem) {
 }
 
 async function pumpTtsQueue() {
-    if (!state.sessionActive || state.ttsRequestActive || state.ttsQueue.length === 0) {
+    if (!state.sessionActive || state.ttsRequestActive || state.ttsGateActive || state.ttsQueue.length === 0) {
         return;
     }
 
@@ -1752,12 +1954,6 @@ function applyMouthMorph(value: number) {
 }
 
 function mouthAnimationLoop() {
-    currentMouthValue += (targetMouthValue - currentMouthValue) * 0.35;
-    if (currentMouthValue < 0.005) {
-        currentMouthValue = 0;
-    }
-
-    applyMouthMorph(currentMouthValue);
     updateLevelIndicator();
     requestAnimationFrame(mouthAnimationLoop);
 }
@@ -1792,6 +1988,7 @@ function resetAvatarStage() {
 
 async function ensureAvatarReady() {
     const avatar = currentAvatar();
+    const lipsyncLang = currentTalkingHeadLipsyncLang();
     if (state.avatarReady && state.head && state.loadedAvatarId === avatar.id) {
         return;
     }
@@ -1813,7 +2010,7 @@ async function ensureAvatarReady() {
     const head = new TalkingHead(stage, {
         cameraView: "upper",
         avatarMood: "neutral",
-        lipsyncLang: "en",
+        lipsyncLang,
         lipsyncModules: [],
         modelFPS: 60,
         cameraRotateX: 0.1,
@@ -1821,12 +2018,14 @@ async function ensureAvatarReady() {
         bodyMoveFactor: 0,
     });
 
+    ensureTalkingHeadLipsyncModules(head);
+
     await head.showAvatar(
         {
             url: avatar.url,
             body: avatar.body,
             avatarMood: "neutral",
-            lipsyncLang: "en",
+            lipsyncLang,
             ttsLang: "en-US",
             baseline: {
                 headRotateX: -0.02,
@@ -1886,6 +2085,8 @@ async function teardownAudioSession() {
     state.muteNode = null;
     state.residual = new Float32Array(0);
     state.ttsOutputNode = null;
+    state.ttsAnalyserNode = null;
+    ttsAnalyserSamples = null;
     resetTtsPendingBuffers();
 }
 
@@ -2056,9 +2257,7 @@ async function startVoiceSession(deviceId: string | null) {
 
         processor.onaudioprocess = (event) => {
             if (state.ttsGateActive) {
-                state.currentLevel = 0;
                 state.residual = new Float32Array(0);
-                targetMouthValue = 0;
                 return;
             }
 
@@ -2434,12 +2633,12 @@ const App: FC = () => (
                         </div>
 
                         <div class="voice-overlay-shell">
-                            <div id="voice-overlay-left" class="voice-overlay-lane voice-overlay-lane-left" />
-                            <div class="voice-overlay-lane voice-overlay-lane-right">
+                            <div id="voice-overlay-left" class="voice-overlay-lane voice-overlay-lane-left">
                                 <div id="voice-overlay-scroll" class="voice-overlay-scroll">
                                     <div id="voice-overlay-stream" class="voice-overlay-stream" />
                                 </div>
                             </div>
+                            <div class="voice-overlay-lane voice-overlay-lane-right" />
                         </div>
                     </div>
 

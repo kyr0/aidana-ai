@@ -10,6 +10,13 @@ import Foundation
 final class PreferencesStore: ObservableObject {
     static let shared = PreferencesStore()
 
+    static var defaultMCPWorkspacePath: String {
+        FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Documents", isDirectory: true)
+            .appendingPathComponent("aidana-workspace", isDirectory: true)
+            .path
+    }
+
     @Published var serverPort: Int {
         didSet { defaults.set(serverPort, forKey: Keys.serverPort) }
     }
@@ -99,7 +106,7 @@ final class PreferencesStore: ObservableObject {
             Keys.ttsStreamingInterval: 0.25,
             Keys.mcpAutoStart: true,
             Keys.mcpPort: 3211,
-            Keys.mcpWorkspacePath: FileManager.default.homeDirectoryForCurrentUser.path,
+            Keys.mcpWorkspacePath: Self.defaultMCPWorkspacePath,
         ])
 
         let port = defaults.integer(forKey: Keys.serverPort)
@@ -124,7 +131,7 @@ final class PreferencesStore: ObservableObject {
         mcpAutoStart = defaults.bool(forKey: Keys.mcpAutoStart)
         let storedMcpPort = defaults.integer(forKey: Keys.mcpPort)
         mcpPort = storedMcpPort == 0 ? 3211 : storedMcpPort
-        mcpWorkspacePath = defaults.string(forKey: Keys.mcpWorkspacePath) ?? FileManager.default.homeDirectoryForCurrentUser.path
+        mcpWorkspacePath = defaults.string(forKey: Keys.mcpWorkspacePath) ?? Self.defaultMCPWorkspacePath
     }
 
     /// All hotwords including the wake word (if non-empty).

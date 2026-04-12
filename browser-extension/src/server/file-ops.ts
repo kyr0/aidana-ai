@@ -1,5 +1,5 @@
-import { access, readdir, readFile, unlink, writeFile } from "node:fs/promises";
-import { normalize, resolve, sep } from "node:path";
+import { access, mkdir, readdir, readFile, unlink, writeFile } from "node:fs/promises";
+import { dirname, normalize, resolve, sep } from "node:path";
 import { runtimeConfig } from "./runtime-config.js";
 
 /** Mutable workspace root — can be updated at runtime via setWorkspacePath */
@@ -10,8 +10,12 @@ export function getWorkspacePath(): string {
 }
 
 export function setWorkspacePath(newPath: string): void {
-  workspacePath = newPath;
+  workspacePath = resolve(newPath);
   console.log(`[file-ops] workspace path set to: ${newPath}`);
+}
+
+export async function ensureWorkspacePathExists(): Promise<void> {
+  await mkdir(workspacePath, { recursive: true });
 }
 
 /** Resolve a relative path against the workspace root, rejecting traversal. */
@@ -57,6 +61,7 @@ export async function fileWrite(
   content: string,
 ): Promise<void> {
   const abs = safePath(relativePath);
+  await mkdir(dirname(abs), { recursive: true });
   await writeFile(abs, content, "utf-8");
 }
 

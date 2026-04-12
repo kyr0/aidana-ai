@@ -400,16 +400,59 @@ private struct MCPPreferencesTab: View {
                         }
 
                         HStack(alignment: .top) {
+                            Text("MCP HTTP")
+                                .frame(width: 100, alignment: .leading)
+                            Text(mcpEndpoint)
+                                .font(.system(.caption, design: .monospaced))
+                                .textSelection(.enabled)
+                        }
+
+                        HStack(alignment: .top) {
+                            Text("Health")
+                                .frame(width: 100, alignment: .leading)
+                            Text(healthEndpoint)
+                                .font(.system(.caption, design: .monospaced))
+                                .textSelection(.enabled)
+                        }
+
+                        HStack(alignment: .top) {
                             Text("Work Queue")
                                 .frame(width: 100, alignment: .leading)
                             VStack(alignment: .leading, spacing: 4) {
-                                Text("3210")
-                                    .font(.system(.body, design: .monospaced))
+                                Text(workQueueEndpoint)
+                                    .font(.system(.caption, design: .monospaced))
+                                    .textSelection(.enabled)
                                 Text("The browser extension currently polls the local work-queue on a fixed port.")
                                     .font(.caption)
                                     .foregroundColor(.secondary)
                             }
                         }
+                    }
+                    .padding(8)
+                }
+
+                GroupBox("Controls") {
+                    VStack(alignment: .leading, spacing: 12) {
+                        HStack(spacing: 12) {
+                            Button("Start Now") {
+                                postMCPRequest(.mcpStartRequested)
+                            }
+                            .disabled(!canStart)
+
+                            Button("Restart") {
+                                postMCPRequest(.mcpRestartRequested)
+                            }
+                            .disabled(!canRestart)
+
+                            Button("Stop") {
+                                postMCPRequest(.mcpStopRequested)
+                            }
+                            .disabled(!canStop)
+                        }
+
+                        Text("Port and workspace changes are applied live while Aidana is running.")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
                     }
                     .padding(8)
                 }
@@ -453,6 +496,47 @@ private struct MCPPreferencesTab: View {
         case .starting: return .orange
         case .error: return .red
         }
+    }
+
+    private var mcpEndpoint: String {
+        "http://127.0.0.1:\(preferences.mcpPort)/mcp"
+    }
+
+    private var healthEndpoint: String {
+        "http://127.0.0.1:\(preferences.mcpPort)/healthz"
+    }
+
+    private var workQueueEndpoint: String {
+        "http://127.0.0.1:3210"
+    }
+
+    private var canStart: Bool {
+        switch serverState.mcpStatus {
+        case .stopped, .error:
+            return true
+        case .starting, .ready:
+            return false
+        }
+    }
+
+    private var canRestart: Bool {
+        if case .ready = serverState.mcpStatus {
+            return true
+        }
+        return false
+    }
+
+    private var canStop: Bool {
+        switch serverState.mcpStatus {
+        case .starting, .ready:
+            return true
+        case .stopped, .error:
+            return false
+        }
+    }
+
+    private func postMCPRequest(_ name: Notification.Name) {
+        NotificationCenter.default.post(name: name, object: nil)
     }
 }
 

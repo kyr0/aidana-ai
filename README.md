@@ -4,6 +4,7 @@ Aidana is a macOS menu bar app that starts and supervises two local speech servi
 
 - a streaming ASR server on `localhost:31337`
 - a TTS sidecar on `localhost:31338`
+- an embedded MCP sidecar on `localhost:3211`
 
 It acts as a local speech runtime for desktop agents, prototypes, and tools that need on-device speech-to-text and text-to-speech. 
 
@@ -23,6 +24,7 @@ When you launch Aidana, it lives in the menu bar and manages a local speech stac
 
 - **ASR** uses Parakeet TDT v3 via FluidAudio for real-time speech recognition.
 - **TTS** runs `mlx_audio.server` as a managed Python subprocess for local speech synthesis.
+- **MCP** runs a bundled Node-based sidecar that exposes local tools over HTTP for external MCP clients.
 - **Status and lifecycle** are visible from the menu bar, Preferences, and a tabbed log window.
 - **Wake word and hotwords** can gate ASR output before it reaches your client.
 - **Model download, preload, and health checks** are handled automatically by the app.
@@ -32,11 +34,22 @@ When you launch Aidana, it lives in the menu bar and manages a local speech stac
 - **Menu bar control plane** for local speech services
 - **Streaming ASR over WebSocket** with partial, confirmed, and final transcripts
 - **Local TTS over HTTP** using an OpenAI-style speech endpoint
+- **Bundled MCP over HTTP** with no separate Node install required on the target Mac
 - **Wake word support** to switch ASR from idle to active mode
 - **Hotword boosting** for names and domain-specific terms
-- **Separate ASR and TTS logs** in a built-in log window
+- **Separate ASR, TTS, and MCP logs** in a built-in log window
 - **Built-in ASR diagnostics** with direct and WebSocket test actions
 - **Local model caching** for both ASR and TTS
+
+### MCP
+
+- Port: `3211`
+- Transport: Streamable HTTP
+- Primary endpoint: `POST /mcp`
+- Health endpoint: `GET /healthz`
+- Work queue: `http://127.0.0.1:3210`
+
+Aidana launches MCP as an embedded subprocess and keeps its status visible in the menu bar, Preferences, and the MCP log tab.
 
 ## Service Overview
 
@@ -96,6 +109,11 @@ Prerequisites:
 - Xcode 16+
 - `uv` for the Python sidecar environment
 
+Notes:
+
+- The Xcode build downloads and pins an official Node.js LTS runtime for the embedded MCP sidecar on first build.
+- Set `AIDANA_EMBEDDED_NODE_BIN` if you want to override the pinned runtime with a specific local binary.
+
 Commands:
 
 ```bash
@@ -120,6 +138,12 @@ open Aidana.xcodeproj
 
 Use the `Aidana` scheme.
 
+## CI
+
+GitHub Actions CI is configured in `.github/workflows/ci.yml` and validates the shared `Aidana` scheme on both `macos-15` and `macos-26` runners. It installs the browser-extension dependencies, prepares the pinned embedded Node runtime, builds the app with `xcodebuild`, smoke-tests the bundled MCP sidecar from the built app bundle, and packages the built `.app` as a zip inside the runner workspace under `dist/`.
+
+The zip is created for packaging validation only right now. It is not uploaded or published by the workflow yet.
+
 ### What to Expect on First Launch
 
 On the first run, Aidana will:
@@ -133,7 +157,7 @@ After the first successful fetch, models are reused from local cache.
 
 ## Preferences
 
-Aidana exposes separate **ASR** and **TTS** tabs in Preferences.
+Aidana exposes separate **ASR**, **TTS**, and **MCP** tabs in Preferences.
 
 ASR settings include:
 
@@ -154,9 +178,17 @@ TTS settings include:
 - gender
 - TTS cache location
 
+MCP settings include:
+
+- auto-start on launch
+- MCP HTTP port
+- workspace root for file-based MCP tools
+- manual start, stop, and restart controls
+- visible MCP, health, and work-queue endpoints
+
 ## Log Window
 
-The log window has separate tabs for **ASR** and **TTS**.
+The log window has separate tabs for **ASR**, **TTS**, and **MCP**.
 
 ASR logs also include built-in test actions:
 

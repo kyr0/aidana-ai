@@ -36,13 +36,17 @@ function readTransportEnv(): McpTransportMode {
   return value === "http" ? "http" : "stdio";
 }
 
+export function defaultWorkspacePath(): string {
+  return resolve(homedir(), "Documents", "aidana-workspace");
+}
+
 function resolveWorkspacePath(): string {
   const configured = readStringEnv("AIDANA_WORKSPACE_PATH");
   if (configured) {
     return resolve(configured);
   }
 
-  return resolve(homedir());
+  return defaultWorkspacePath();
 }
 
 function fallbackWorkQueueEndpoint(): string {

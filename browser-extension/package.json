@@ -6,7 +6,10 @@
     "prebuild": "rm -rf ./dist && rm -rf ./node_modules/.bun",
     "build": "vite build",
     "build:embedded-mcp": "bun ./scripts/build-embedded-mcp.mjs",
+    "prepare:talkinghead-assets": "sh ../scripts/prepare-talkinghead-assets.sh",
+    "prepare:embedded-node": "sh ../scripts/prepare-embedded-node.sh",
     "test:browser-automation": "tsx example-browser-automation.ts",
+    "test:mcp": "tsx example-mcp-inspect.ts",
     "test:file-search": "tsx example-mcp-file-search.ts",
     "test:doctor-search": "tsx example-mcp-doctor-search.ts",
     "mcp": "tsx mcp-server.ts"

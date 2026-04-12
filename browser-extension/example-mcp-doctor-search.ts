@@ -1,16 +1,12 @@
 /**
  * Example: Doctor Search via the MCP server + browser extension
  *
- * 1. Launch the MCP server over stdio
+ * 1. Read ~/.aidana/mcp.json to discover Aidana's MCP HTTP endpoint
  * 2. delete_file    → clear previous doctor-search-result.json
  * 3. 116117_search  → search the 116117 doctor directory via the extension
  * 4. file_write     → write the JSON result to workspace/doctor-search-result.json
  *
  * Run with: bun run test:doctor-search
- *
- * Do not run `bun run mcp` in parallel with this example. This script spawns
- * its own MCP server child process, which in turn owns the HTTP work queue
- * that the extension polls.
  */
 import { createExampleMcpSession } from "./example-mcp-client.js";
 

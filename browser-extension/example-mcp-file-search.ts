@@ -1,17 +1,13 @@
 /**
  * Example: File-driven Google Search via the MCP server + browser extension
  *
- * 1. Launch the MCP server over stdio
+ * 1. Read ~/.aidana/mcp.json to discover Aidana's MCP HTTP endpoint
  * 2. delete_file   → clear previous search-results.json (idempotency)
  * 3. file_read     → read workspace/search-queries.txt (one query per line)
  * 4. google_search → run each query through the browser extension via MCP
  * 5. file_write    → write workspace/search-results.json with all results
  *
  * Run with:  bun run test:file-search
- *
- * Do not run `bun run mcp` in parallel with this example. This script spawns
- * its own MCP server child process, which in turn owns the HTTP work queue
- * that the extension polls.
  */
 import { createExampleMcpSession } from "./example-mcp-client.js";
 

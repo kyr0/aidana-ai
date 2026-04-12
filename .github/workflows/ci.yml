@@ -1,0 +1,140 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  macos:
+    name: ${{ matrix.runner }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        runner:
+          - macos-15
+          - macos-26
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Show macOS and Xcode versions
+        run: |
+          sw_vers
+          uname -m
+          xcodebuild -version
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Cache embedded Node runtime
+        uses: actions/cache@v4
+        with:
+          path: browser-extension/build/embedded-node
+          key: embedded-node-v24.14.1-${{ runner.os }}
+
+      - name: Install browser-extension dependencies
+        working-directory: browser-extension
+        run: npm install
+
+      - name: Prepare embedded Node runtime
+        id: embedded-node
+        run: |
+          echo "build_node=$(command -v node)" >> "$GITHUB_OUTPUT"
+          echo "embedded_node=$(sh scripts/prepare-embedded-node.sh)" >> "$GITHUB_OUTPUT"
+
+      - name: Build Aidana
+        env:
+          AIDANA_BUILD_JS_RUNTIME: ${{ steps.embedded-node.outputs.build_node }}
+          AIDANA_EMBEDDED_NODE_BIN: ${{ steps.embedded-node.outputs.embedded_node }}
+        run: |
+          set -o pipefail
+          xcodebuild \
+            -project Aidana.xcodeproj \
+            -scheme Aidana \
+            -configuration Debug \
+            -destination 'platform=macOS' \
+            -resultBundlePath BuildResults \
+            build | tee xcodebuild.log
+
+      - name: Verify bundled MCP artifacts
+        run: |
+          BUILD_DIR="$(xcodebuild -project Aidana.xcodeproj -scheme Aidana -configuration Debug -destination 'platform=macOS' -showBuildSettings | awk '/BUILT_PRODUCTS_DIR/ { print $3; exit }')"
+          APP_PATH="$BUILD_DIR/Aidana.app"
+          EMBEDDED_DIR="$APP_PATH/Contents/Resources/EmbeddedMCP"
+          NODE_BIN="$EMBEDDED_DIR/runtime/bin/node"
+          MCP_SCRIPT="$EMBEDDED_DIR/mcp-server.cjs"
+
+          test -d "$EMBEDDED_DIR"
+          test -x "$NODE_BIN"
+          test -f "$MCP_SCRIPT"
+
+          "$NODE_BIN" -v
+          /usr/bin/lipo -archs "$NODE_BIN"
+
+      - name: Smoke-test bundled MCP server
+        run: |
+          BUILD_DIR="$(xcodebuild -project Aidana.xcodeproj -scheme Aidana -configuration Debug -destination 'platform=macOS' -showBuildSettings | awk '/BUILT_PRODUCTS_DIR/ { print $3; exit }')"
+          APP_PATH="$BUILD_DIR/Aidana.app"
+          EMBEDDED_DIR="$APP_PATH/Contents/Resources/EmbeddedMCP"
+          NODE_BIN="$EMBEDDED_DIR/runtime/bin/node"
+          MCP_SCRIPT="$EMBEDDED_DIR/mcp-server.cjs"
+          PORT=33221
+          WORK_QUEUE_PORT=33220
+
+          AIDANA_MCP_TRANSPORT=http \
+          AIDANA_MCP_PORT="$PORT" \
+          AIDANA_WORK_QUEUE_PORT="$WORK_QUEUE_PORT" \
+          AIDANA_WORKSPACE_PATH="$GITHUB_WORKSPACE" \
+          "$NODE_BIN" "$MCP_SCRIPT" > mcp.log 2>&1 &
+          MCP_PID=$!
+
+          cleanup() {
+            kill "$MCP_PID" 2>/dev/null || true
+            wait "$MCP_PID" 2>/dev/null || true
+          }
+          trap cleanup EXIT
+
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent --show-error "http://127.0.0.1:$PORT/healthz" > mcp-health.json; then
+              cat mcp-health.json
+              exit 0
+            fi
+            sleep 1
+          done
+
+          echo "Bundled MCP health check failed" >&2
+          cat mcp.log >&2 || true
+          exit 1
+
+      - name: Package Aidana zip
+        run: |
+          BUILD_DIR="$(xcodebuild -project Aidana.xcodeproj -scheme Aidana -configuration Debug -destination 'platform=macOS' -showBuildSettings | awk '/BUILT_PRODUCTS_DIR/ { print $3; exit }')"
+          APP_PATH="$BUILD_DIR/Aidana.app"
+          ZIP_PATH="dist/Aidana-${{ matrix.runner }}-Debug.zip"
+
+          mkdir -p dist
+          rm -f "$ZIP_PATH"
+          /usr/bin/ditto -c -k --sequesterRsrc --keepParent "$APP_PATH" "$ZIP_PATH"
+          /usr/bin/shasum -a 256 "$ZIP_PATH"
+          ls -lh "$ZIP_PATH"
+
+      - name: Upload CI diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-diagnostics-${{ matrix.runner }}
+          if-no-files-found: ignore
+          path: |
+            xcodebuild.log
+            mcp.log
+            mcp-health.json
+            BuildResults.xcresult

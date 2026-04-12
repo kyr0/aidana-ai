@@ -21,7 +21,7 @@ export const fileWriteMeta: McpToolMeta = {
   workItemType: "file_write" as any,
   name: "file_write",
   description:
-    "Write content to a file relative to the workspace directory. Creates or overwrites.",
+    "Write content to a file relative to the workspace directory. Creates parent directories as needed and overwrites existing content.",
   inputSchema: {
     type: "object",
     properties: {

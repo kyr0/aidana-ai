@@ -10,6 +10,15 @@ import SwiftUI
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
+    private enum MCPAction: Sendable {
+        case launchIfEnabled
+        case applyRuntimeSettings
+        case setAutoStart(Bool)
+        case startManual
+        case stopManual
+        case restartManual
+    }
+
     private let preferences = PreferencesStore.shared
     private let serverState = ServerState()
     private let logStore = LogStore()
@@ -30,6 +39,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var preferencesWindowController: NSWindowController?
     private var logWindowController: NSWindowController?
     private var serverLifecycleTask: Task<Void, Never>?
+    private var mcpActionTask: Task<Void, Never>?
+    private var mcpManualStopRequested = false
     private let logger = Logger(subsystem: "de.aronhomberg.aidana", category: "AppDelegate")
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -42,6 +53,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     func applicationWillTerminate(_ notification: Notification) {
         logStore.append("Shutting down…")
         serverLifecycleTask?.cancel()
+        mcpActionTask?.cancel()
         MCPServer.killStaleProcesses()
         // Kill TTS synchronously — can't await in willTerminate
         TTSServer.killStaleProcesses()
@@ -111,7 +123,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 }
             }
 
-            async let mcpStartup: Void = self.startMCPServerIfNeeded()
+            let mcpStartupTask = self.enqueueMCPAction(.launchIfEnabled)
 
             // Set TTS to starting immediately
             await MainActor.run {
@@ -180,62 +192,164 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
             // Start TTS sidecar
             await self.startTTSServer()
-            await mcpStartup
+            await mcpStartupTask.value
         }
     }
 
-    private func startMCPServerIfNeeded() async {
-        let autoStart = await MainActor.run { preferences.mcpAutoStart }
-        guard autoStart else {
-            await MainActor.run {
+    private func enqueueMCPAction(_ action: MCPAction) -> Task<Void, Never> {
+        mcpActionTask?.cancel()
+
+        let task = Task { @MainActor [weak self] in
+            guard let self else { return }
+            await self.performMCPAction(action)
+        }
+
+        mcpActionTask = task
+        return task
+    }
+
+    private func performMCPAction(_ action: MCPAction) async {
+        guard !Task.isCancelled else { return }
+
+        switch action {
+        case .launchIfEnabled:
+            guard preferences.mcpAutoStart else {
                 serverState.setMCPStatus(.stopped)
                 mcpLogStore.append("MCP auto-start disabled")
+                return
             }
-            return
-        }
 
-        let port = await MainActor.run { preferences.mcpPort }
-        let workspacePath = await MainActor.run { preferences.mcpWorkspacePath.trimmingCharacters(in: .whitespacesAndNewlines) }
+            let isRunning = await mcpServer.isRunning
+            guard !isRunning else { return }
+
+            mcpManualStopRequested = false
+            await startMCPServer(configuration: currentMCPConfiguration())
+
+        case .applyRuntimeSettings:
+            let configuration = currentMCPConfiguration()
+            let isRunning = await mcpServer.isRunning
+
+            if isRunning {
+                await restartMCPServer(configuration: configuration, reason: "Applying updated MCP settings…")
+            }
+
+        case .setAutoStart(let enabled):
+            if enabled {
+                mcpLogStore.append("MCP auto-start enabled")
+
+                let isRunning = await mcpServer.isRunning
+                guard !isRunning && !mcpManualStopRequested else { return }
+                await startMCPServer(configuration: currentMCPConfiguration())
+            } else {
+                mcpLogStore.append("MCP auto-start disabled for next launch")
+
+                let isRunning = await mcpServer.isRunning
+                if !isRunning {
+                    serverState.setMCPStatus(.stopped)
+                }
+            }
+
+        case .startManual:
+            let isRunning = await mcpServer.isRunning
+            guard !isRunning else {
+                mcpLogStore.append("MCP server already running at \(mcpEndpoint(port: preferences.mcpPort))")
+                return
+            }
+
+            mcpManualStopRequested = false
+            await startMCPServer(configuration: currentMCPConfiguration())
+
+        case .stopManual:
+            mcpManualStopRequested = true
+            await stopMCPServer(
+                reason: "Stopping MCP server…",
+                noteIfAlreadyStopped: "MCP server already stopped"
+            )
+
+        case .restartManual:
+            mcpManualStopRequested = false
+            await restartMCPServer(
+                configuration: currentMCPConfiguration(),
+                reason: "Restarting MCP server…"
+            )
+        }
+    }
+
+    private func currentMCPConfiguration() -> MCPServer.LaunchConfiguration {
+        let workspacePath = preferences.mcpWorkspacePath.trimmingCharacters(in: .whitespacesAndNewlines)
         let effectiveWorkspacePath = workspacePath.isEmpty
-            ? FileManager.default.homeDirectoryForCurrentUser.path
+            ? PreferencesStore.defaultMCPWorkspacePath
             : workspacePath
 
-        await MainActor.run {
-            serverState.setMCPStatus(.starting)
-            mcpLogStore.append("Starting MCP server on port \(port)…")
-        }
+        return .init(
+            mcpPort: preferences.mcpPort,
+            workQueuePort: 3210,
+            workspacePath: effectiveWorkspacePath
+        )
+    }
+
+    private func startMCPServer(configuration: MCPServer.LaunchConfiguration) async {
+        guard !Task.isCancelled else { return }
+
+        let port = configuration.mcpPort
+        serverState.setMCPStatus(.starting)
+        mcpLogStore.append("Starting MCP server on port \(port)…")
 
         do {
-            try await mcpServer.start(
-                configuration: .init(
-                    mcpPort: port,
-                    workQueuePort: 3210,
-                    workspacePath: effectiveWorkspacePath
-                )
-            )
+            try await mcpServer.start(configuration: configuration)
         } catch {
             logger.error("MCP server start failed: \(error)")
-            await MainActor.run {
-                serverState.setMCPStatus(.error(error.localizedDescription))
-                mcpLogStore.append("MCP server error: \(error.localizedDescription)")
-            }
+            guard !Task.isCancelled else { return }
+            serverState.setMCPStatus(.error(error.localizedDescription))
+            mcpLogStore.append("MCP server error: \(error.localizedDescription)")
             return
         }
+
+        guard !Task.isCancelled else { return }
 
         let ready = await mcpServer.waitForReady(port: port, timeout: 30)
+        guard !Task.isCancelled else { return }
+
         guard ready else {
             logger.error("MCP server did not become ready within timeout")
-            await MainActor.run {
-                serverState.setMCPStatus(.error("timeout"))
-                mcpLogStore.append("MCP server timeout — not responding")
+            await mcpServer.stopAndWait()
+            guard !Task.isCancelled else { return }
+            serverState.setMCPStatus(.error("timeout"))
+            mcpLogStore.append("MCP server timeout — not responding")
+            return
+        }
+
+        serverState.setMCPStatus(.ready(port: port))
+        mcpLogStore.append("MCP server ready at \(mcpEndpoint(port: port))")
+    }
+
+    private func restartMCPServer(configuration: MCPServer.LaunchConfiguration, reason: String) async {
+        guard !Task.isCancelled else { return }
+        mcpLogStore.append(reason)
+        await mcpServer.stopAndWait()
+        guard !Task.isCancelled else { return }
+        await startMCPServer(configuration: configuration)
+    }
+
+    private func stopMCPServer(reason: String, noteIfAlreadyStopped: String? = nil) async {
+        let isRunning = await mcpServer.isRunning
+        guard isRunning else {
+            serverState.setMCPStatus(.stopped)
+            if let noteIfAlreadyStopped {
+                mcpLogStore.append(noteIfAlreadyStopped)
             }
             return
         }
 
-        await MainActor.run {
-            serverState.setMCPStatus(.ready(port: port))
-            mcpLogStore.append("MCP server ready on port \(port)")
-        }
+        serverState.setMCPStatus(.stopped)
+        mcpLogStore.append(reason)
+        await mcpServer.stopAndWait()
+        guard !Task.isCancelled else { return }
+        serverState.setMCPStatus(.stopped)
+    }
+
+    private func mcpEndpoint(port: Int) -> String {
+        "http://127.0.0.1:\(port)/mcp"
     }
 
     private func startTTSServer() async {
@@ -383,6 +497,49 @@ private extension AppDelegate {
             .receive(on: RunLoop.main)
             .sink { [weak self] _ in self?.showPreferencesWindow(nil) }
             .store(in: &cancellables)
+
+        NotificationCenter.default.publisher(for: .mcpStartRequested)
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in
+                _ = self?.enqueueMCPAction(.startManual)
+            }
+            .store(in: &cancellables)
+
+        NotificationCenter.default.publisher(for: .mcpStopRequested)
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in
+                _ = self?.enqueueMCPAction(.stopManual)
+            }
+            .store(in: &cancellables)
+
+        NotificationCenter.default.publisher(for: .mcpRestartRequested)
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in
+                _ = self?.enqueueMCPAction(.restartManual)
+            }
+            .store(in: &cancellables)
+
+        preferences.$mcpAutoStart
+            .removeDuplicates()
+            .dropFirst()
+            .receive(on: RunLoop.main)
+            .sink { [weak self] enabled in
+                _ = self?.enqueueMCPAction(.setAutoStart(enabled))
+            }
+            .store(in: &cancellables)
+
+        Publishers.CombineLatest(
+            preferences.$mcpPort.removeDuplicates(),
+            preferences.$mcpWorkspacePath
+                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .removeDuplicates()
+        )
+        .dropFirst()
+        .debounce(for: .milliseconds(350), scheduler: RunLoop.main)
+        .sink { [weak self] _, _ in
+            _ = self?.enqueueMCPAction(.applyRuntimeSettings)
+        }
+        .store(in: &cancellables)
     }
 
 }

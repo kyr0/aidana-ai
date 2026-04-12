@@ -360,17 +360,18 @@ body.aidana-voice-page {
 }
 
 .voice-overlay-lane-left {
+  grid-column: 1 / -1;
   justify-content: flex-start;
-  align-items: flex-end;
-}
-
-.voice-overlay-lane-right {
-  justify-content: flex-end;
   align-items: stretch;
 }
 
+.voice-overlay-lane-right {
+  display: none;
+}
+
 .voice-overlay-scroll {
-  width: min(26rem, 100%);
+  width: 100%;
+  max-width: 100%;
   height: 100%;
   min-height: 0;
   max-height: 100%;
@@ -423,7 +424,7 @@ body.aidana-voice-page {
 }
 
 .voice-overlay-bubble {
-  width: min(24rem, 100%);
+  max-width: min(24rem, 100%);
   padding: 0.9rem 1rem 0.75rem;
   border-radius: 1.2rem;
   border: 1px solid rgb(255 255 255 / 0.16);
@@ -500,15 +501,29 @@ body.aidana-voice-page {
   color: rgb(205 221 241 / 0.85);
 }
 
-.voice-overlay-meta {
+.voice-overlay-sender {
+  margin-bottom: 0.45rem;
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: rgb(205 221 241 / 0.68);
+}
+
+.voice-overlay-footer {
   margin-top: 0.55rem;
   display: flex;
-  flex-wrap: wrap;
+  justify-content: flex-end;
+  align-items: center;
   gap: 0.5rem;
   font-size: 0.68rem;
   letter-spacing: 0.06em;
   text-transform: uppercase;
   color: rgb(205 221 241 / 0.54);
+}
+
+.voice-overlay-live {
+  color: rgb(130 190 255 / 0.84);
 }
 
 .voice-meter {
@@ -578,12 +593,13 @@ body.aidana-voice-page {
   }
 
   .voice-overlay-lane-left {
-    display: none;
+    grid-column: auto;
+    justify-content: stretch;
+    align-items: stretch;
   }
 
   .voice-overlay-lane-right {
-    justify-content: stretch;
-    align-items: stretch;
+    display: none;
   }
 
   .voice-overlay-scroll {

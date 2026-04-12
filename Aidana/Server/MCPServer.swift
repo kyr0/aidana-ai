@@ -22,6 +22,16 @@ actor MCPServer {
         let workspacePath: String
     }
 
+    private struct ClientConfigurationFile: Encodable {
+        let servers: [String: ClientConfigurationEntry]
+        let mcpServers: [String: ClientConfigurationEntry]
+    }
+
+    private struct ClientConfigurationEntry: Encodable {
+        let type: String
+        let url: URL
+    }
+
     enum MCPError: LocalizedError {
         case embeddedBundleMissing(String)
         case runtimeMissing(URL)
@@ -40,6 +50,12 @@ actor MCPServer {
     }
 
     private let logger = Logger(subsystem: "de.aronhomberg.aidana", category: "MCPServer")
+    private let mcpTransport = "http"
+    private let mcpHost = "127.0.0.1"
+    private let mcpPath = "/mcp"
+    private let defaultClientConfigDirectoryName = ".aidana"
+    private let defaultClientConfigFileName = "mcp.json"
+    private let defaultClientConfigServerName = "aidana"
     private var process: Process?
     private var stdoutPipe: Pipe?
     private var stderrPipe: Pipe?
@@ -81,8 +97,8 @@ actor MCPServer {
         proc.qualityOfService = .userInitiated
 
         var environment = ProcessInfo.processInfo.environment
-        environment["AIDANA_MCP_TRANSPORT"] = "http"
-        environment["AIDANA_MCP_HOST"] = "127.0.0.1"
+        environment["AIDANA_MCP_TRANSPORT"] = mcpTransport
+        environment["AIDANA_MCP_HOST"] = mcpHost
         environment["AIDANA_MCP_PORT"] = "\(configuration.mcpPort)"
         environment["AIDANA_WORK_QUEUE_PORT"] = "\(configuration.workQueuePort)"
         environment["AIDANA_WORKSPACE_PATH"] = configuration.workspacePath
@@ -110,6 +126,8 @@ actor MCPServer {
         process = proc
         isRunning = true
 
+        prepareDefaultClientConfigurationIfNeeded(configuration: configuration)
+
         let log = onLog
         log?("MCP: launched embedded \(artifacts.runtimeKind.rawValue) runtime (PID \(proc.processIdentifier))")
         logger.info("MCP server started with PID \(proc.processIdentifier)")
@@ -119,7 +137,7 @@ actor MCPServer {
         let deadline = Date().addingTimeInterval(timeout)
         let url = URL(string: "http://127.0.0.1:\(port)/healthz")!
 
-        while Date() < deadline {
+        while !Task.isCancelled && Date() < deadline {
             do {
                 let (_, response) = try await URLSession.shared.data(from: url)
                 if let http = response as? HTTPURLResponse, http.statusCode == 200 {
@@ -133,6 +151,11 @@ actor MCPServer {
         }
 
         return false
+    }
+
+    func stopAndWait(timeout: TimeInterval = 5) async {
+        stop()
+        _ = await waitUntilStopped(timeout: timeout)
     }
 
     func stop() {
@@ -149,6 +172,16 @@ actor MCPServer {
                 kill(proc.processIdentifier, SIGKILL)
             }
         }
+    }
+
+    func waitUntilStopped(timeout: TimeInterval = 5) async -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+
+        while isRunning && Date() < deadline {
+            try? await Task.sleep(nanoseconds: 100_000_000)
+        }
+
+        return !isRunning
     }
 
     private func resolveLaunchArtifacts() throws -> (rootURL: URL, runtimeURL: URL, scriptURL: URL, runtimeKind: RuntimeKind) {
@@ -185,6 +218,77 @@ actor MCPServer {
         }
 
         throw MCPError.runtimeMissing(rootURL)
+    }
+
+    private func prepareDefaultClientConfigurationIfNeeded(configuration: LaunchConfiguration) {
+        let fileManager = FileManager.default
+        let configDirectoryURL = defaultClientConfigDirectoryURL(fileManager: fileManager)
+        let configURL = configDirectoryURL.appendingPathComponent(defaultClientConfigFileName)
+
+        do {
+            try fileManager.createDirectory(
+                at: configDirectoryURL,
+                withIntermediateDirectories: true
+            )
+
+            var isDirectory = ObjCBool(false)
+            if fileManager.fileExists(atPath: configURL.path, isDirectory: &isDirectory) {
+                if isDirectory.boolValue {
+                    throw NSError(
+                        domain: NSPOSIXErrorDomain,
+                        code: Int(EISDIR),
+                        userInfo: [
+                            NSFilePathErrorKey: configURL.path,
+                            NSLocalizedDescriptionKey: "Expected a file at \(configURL.path), but found a directory.",
+                        ]
+                    )
+                }
+
+                return
+            }
+
+            let entry = ClientConfigurationEntry(
+                type: mcpTransport,
+                url: mcpEndpointURL(port: configuration.mcpPort)
+            )
+            let config = ClientConfigurationFile(
+                servers: [defaultClientConfigServerName: entry],
+                mcpServers: [defaultClientConfigServerName: entry]
+            )
+
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+
+            var data = try encoder.encode(config)
+            data.append(0x0A)
+
+            try data.write(to: configURL, options: .atomic)
+            onLog?("MCP: wrote default client config to \(configURL.path)")
+        } catch {
+            logger.error("Failed to prepare default MCP client config: \(error.localizedDescription, privacy: .public)")
+            onLog?("MCP: failed to prepare default client config at \(configURL.path): \(error.localizedDescription)")
+        }
+    }
+
+    private func defaultClientConfigDirectoryURL(fileManager: FileManager) -> URL {
+        fileManager.homeDirectoryForCurrentUser.appendingPathComponent(
+            defaultClientConfigDirectoryName,
+            isDirectory: true
+        )
+    }
+
+    private func mcpEndpointURL(port: Int) -> URL {
+        var components = URLComponents()
+        components.scheme = mcpTransport
+        components.host = mcpHost
+        components.port = port
+        components.path = mcpPath
+
+        guard let url = components.url else {
+            preconditionFailure("Invalid MCP endpoint components")
+        }
+
+        return url
     }
 
     private func makeReadabilityHandler() -> @Sendable (FileHandle) -> Void {
