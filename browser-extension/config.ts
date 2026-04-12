@@ -52,7 +52,7 @@ function defaultWorkspacePath(): string {
 
 export default {
   serverEndpoint: "http://localhost:3210",
-  serverTaskPollingIntervalMs: 100,
+  serverTaskPollingIntervalMs: 1000,
   workspacePath: defaultWorkspacePath(),
   retry: {
     retry: true,

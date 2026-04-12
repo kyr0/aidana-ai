@@ -12,6 +12,9 @@ actor ModelManager {
 
     private(set) var asrManager: AsrManager?
     private(set) var asrModels: AsrModels?
+    private var ctcModels: CtcModels?
+    private var asrRuntimeConfiguration = ASRRuntimeConfiguration()
+    private var lastAppliedASRRuntimeConfiguration: ASRRuntimeConfiguration?
 
     private(set) var asrReady = false
     private(set) var asrWarmedUp = false
@@ -38,6 +41,24 @@ actor ModelManager {
         asrModels = models
         asrReady = true
         logger.info("Parakeet TDT v3 ASR models ready")
+    }
+
+    func setASRRuntimeConfiguration(_ configuration: ASRRuntimeConfiguration) async throws -> Bool {
+        guard configuration != asrRuntimeConfiguration || lastAppliedASRRuntimeConfiguration != configuration else {
+            return false
+        }
+
+        asrRuntimeConfiguration = configuration
+
+        if asrReady {
+            try await applyASRRuntimeConfiguration(configuration)
+            lastAppliedASRRuntimeConfiguration = configuration
+        }
+
+        logger.info(
+            "Stored ASR runtime configuration with \(configuration.effectiveHotwords.count, privacy: .public) boosted terms"
+        )
+        return true
     }
 
     func transcribe(samples: [Float]) async throws -> ASRResult {
@@ -78,9 +99,44 @@ actor ModelManager {
     func shutdown() {
         asrManager = nil
         asrModels = nil
+        ctcModels = nil
+        asrRuntimeConfiguration = ASRRuntimeConfiguration()
+        lastAppliedASRRuntimeConfiguration = nil
         asrReady = false
         asrWarmedUp = false
         logger.info("ModelManager shut down")
+    }
+
+    private func applyASRRuntimeConfiguration(_ configuration: ASRRuntimeConfiguration) async throws {
+        guard let manager = asrManager else { return }
+
+        guard configuration.hotwordBoostingEnabled else {
+            manager.disableVocabularyBoosting()
+            logger.info("ASR vocabulary boosting disabled")
+            return
+        }
+
+        let ctcModels = try await loadCTCModelsIfNeeded()
+        let vocabulary = CustomVocabularyContext(
+            terms: configuration.effectiveHotwords.map { CustomVocabularyTerm(text: $0) }
+        )
+
+        try await manager.configureVocabularyBoosting(vocabulary: vocabulary, ctcModels: ctcModels)
+        logger.info(
+            "ASR vocabulary boosting enabled for \(configuration.effectiveHotwords.count, privacy: .public) terms"
+        )
+    }
+
+    private func loadCTCModelsIfNeeded() async throws -> CtcModels {
+        if let ctcModels {
+            return ctcModels
+        }
+
+        logger.info("Preparing Parakeet CTC models for vocabulary boosting…")
+        let loadedModels = try await CtcModels.downloadAndLoad()
+        ctcModels = loadedModels
+        logger.info("Parakeet CTC models ready")
+        return loadedModels
     }
 
     enum ModelError: LocalizedError {

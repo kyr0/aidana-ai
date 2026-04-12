@@ -1,7 +1,7 @@
 declare const self: ServiceWorkerGlobalScope;
 
 import { registerRpc } from "./lib/rpc";
-import { WorkerRpc } from "./worker-rpc";
+import { openVoiceAgentWindow, WorkerRpc } from "./worker-rpc";
 import { WorkItemScheduler } from "./lib/worker/work-item-scheduler";
 import { GoogleSearchWorkerTool } from "./tools/google-search";
 import { ArztSucheWorkerTool } from "./tools/116117-arztsuche";
@@ -15,6 +15,14 @@ startKeepalive();
 
 // Register the worker's RPC endpoint — this installs the chrome.runtime.onMessage listener
 registerRpc("WorkerRpc", WorkerRpc);
+
+chrome.action.onClicked.addListener(async () => {
+  try {
+    await openVoiceAgentWindow();
+  } catch (error) {
+    console.error("[worker] failed to open the Voice Agent window:", error);
+  }
+});
 
 // Set up the work-item scheduler with registered tools
 const scheduler = new WorkItemScheduler();

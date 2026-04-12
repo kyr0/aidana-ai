@@ -32,5 +32,6 @@ clean:
 setup:
 	uv sync
 
-test-mcp: start
+test-mcp:
+	@echo "Running MCP test against the existing Aidana/MCP setup (server and extension assumed started)"
 	cd $(BROWSER_EXTENSION_DIR) && bun run test:mcp

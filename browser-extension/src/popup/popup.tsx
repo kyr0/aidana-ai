@@ -38,6 +38,63 @@ type WorkerRpc = { WorkerRpc: WorkerRpcApi };
 const rpc = await createWorkerRpcClient<WorkerRpc>();
 const { WorkerRpc } = rpc;
 
+const MCP_CONFIG_URL = "http://localhost:31337/mcp/config";
+
+type AidanaMcpConfig = {
+  transport: string;
+  host: string;
+  port: number;
+  path: string;
+  healthPath: string;
+  workspacePath: string;
+  autoStart: boolean;
+  workQueuePort: number;
+};
+
+function buildMcpEndpointLabel(config: AidanaMcpConfig): string {
+  return `${config.transport}://${config.host}:${config.port}${config.path}`;
+}
+
+async function loadAidanaMcpConfig(): Promise<AidanaMcpConfig | null> {
+  try {
+    const response = await fetch(MCP_CONFIG_URL, { cache: "no-store" });
+    if (!response.ok) {
+      throw new Error(`Aidana MCP config request failed with status ${response.status}.`);
+    }
+
+    const data = (await response.json()) as Partial<AidanaMcpConfig>;
+    const port = typeof data.port === "number" && data.port > 0 ? data.port : 3211;
+    const transport = typeof data.transport === "string" && data.transport.length > 0
+      ? data.transport
+      : "http";
+    const host = typeof data.host === "string" && data.host.length > 0
+      ? data.host
+      : "127.0.0.1";
+
+    return {
+      transport,
+      host,
+      port,
+      path: typeof data.path === "string" && data.path.length > 0 ? data.path : "/mcp",
+      healthPath:
+        typeof data.healthPath === "string" && data.healthPath.length > 0
+          ? data.healthPath
+          : "/healthz",
+      workspacePath:
+        typeof data.workspacePath === "string" && data.workspacePath.length > 0
+          ? data.workspacePath
+          : "/",
+      autoStart: typeof data.autoStart === "boolean" ? data.autoStart : true,
+      workQueuePort:
+        typeof data.workQueuePort === "number" && data.workQueuePort > 0
+          ? data.workQueuePort
+          : 3210,
+    };
+  } catch {
+    return null;
+  }
+}
+
 type VoiceAgentWindowInfo = Awaited<
   ReturnType<WorkerRpcApi["getVoiceAgentWindowInfo"]>
 >;
@@ -515,6 +572,21 @@ const dirBrowserRef = createRef<HTMLDivElement>();
 const currentPathRef = createRef<HTMLSpanElement>();
 
 const savedWorkspacePath = await WorkerRpc.getPrefValue(WORKSPACE_PREF_KEY, true);
+const aidanaMcpConfig = await loadAidanaMcpConfig();
+const aidanaWorkspacePath =
+  typeof aidanaMcpConfig?.workspacePath === "string" && aidanaMcpConfig.workspacePath.length > 0
+    ? aidanaMcpConfig.workspacePath
+    : null;
+const initialWorkspacePath = aidanaWorkspacePath ||
+  (typeof savedWorkspacePath === "string" ? savedWorkspacePath : "/");
+const mcpEndpointLabel = aidanaMcpConfig ? buildMcpEndpointLabel(aidanaMcpConfig) : null;
+
+if (
+  aidanaWorkspacePath &&
+  (typeof savedWorkspacePath !== "string" || savedWorkspacePath !== aidanaWorkspacePath)
+) {
+  await WorkerRpc.setPrefValue(WORKSPACE_PREF_KEY, aidanaWorkspacePath, true);
+}
 
 // Directory browser state
 const dirStore = createStore<{
@@ -525,7 +597,7 @@ const dirStore = createStore<{
   error: string | null;
 }>({
   open: false,
-  currentPath: typeof savedWorkspacePath === "string" ? savedWorkspacePath : "/",
+  currentPath: initialWorkspacePath,
   entries: [],
   loading: false,
   error: null,
@@ -671,8 +743,9 @@ const SettingsCard: FC = () => (
     <CardHeader>
       <CardTitle>Workspace</CardTitle>
       <CardDescription>
-        Directory used by file tools (file_read, file_write, delete_file).
-        Changes are pushed to the MCP server immediately.
+        Directory used by file tools (file_read, file_write, delete_file). The
+        popup initializes from Aidana&apos;s MCP config when available, and changes
+        are pushed to the MCP server immediately.
       </CardDescription>
     </CardHeader>
     <CardContent class="space-y-3">
@@ -681,9 +754,7 @@ const SettingsCard: FC = () => (
         <div class="flex items-center gap-2">
           <div class="flex-1 min-w-0 rounded-md border px-3 py-2 text-sm font-mono truncate bg-muted">
             <span ref={currentPathRef}>
-              {typeof savedWorkspacePath === "string"
-                ? savedWorkspacePath
-                : "(not set)"}
+              {initialWorkspacePath || "(not set)"}
             </span>
           </div>
           <Button
@@ -705,6 +776,11 @@ const SettingsCard: FC = () => (
       <div ref={dirBrowserRef}>
         <DirBrowserContent />
       </div>
+      <p class="text-xs text-muted-foreground">
+        {mcpEndpointLabel
+          ? `Aidana MCP endpoint: ${mcpEndpointLabel}`
+          : "Aidana MCP config is unavailable; using the last stored workspace path."}
+      </p>
       <p ref={workspaceStatusRef} class="text-xs text-muted-foreground" />
     </CardContent>
   </Card>

@@ -34,6 +34,32 @@ async function getVoiceAgentWindowInfo(): Promise<VoiceAgentWindowInfo> {
   };
 }
 
+export async function openVoiceAgentWindow(): Promise<VoiceAgentWindowInfo> {
+  const existing = await getVoiceAgentWindowInfo();
+
+  if (existing.open && existing.windowId != null && existing.tabId != null) {
+    await chrome.windows.update(existing.windowId, { focused: true });
+    await chrome.tabs.update(existing.tabId, { active: true });
+    return { ...existing, created: false };
+  }
+
+  const createdWindow = await chrome.windows.create({
+    url: existing.pageUrl,
+    type: "popup",
+    focused: true,
+    width: 1280,
+    height: 880,
+  });
+
+  return {
+    open: true,
+    pageUrl: existing.pageUrl,
+    tabId: createdWindow.tabs?.[0]?.id ?? null,
+    windowId: createdWindow.id ?? null,
+    created: true,
+  };
+}
+
 /** Worker-side RPC methods callable from popup and content-script */
 export const WorkerRpc = {
   async dbGet(key: string): Promise<string | undefined> {
@@ -94,29 +120,7 @@ export const WorkerRpc = {
   },
 
   async openVoiceAgentWindow(): Promise<VoiceAgentWindowInfo> {
-    const existing = await getVoiceAgentWindowInfo();
-
-    if (existing.open && existing.windowId != null && existing.tabId != null) {
-      await chrome.windows.update(existing.windowId, { focused: true });
-      await chrome.tabs.update(existing.tabId, { active: true });
-      return { ...existing, created: false };
-    }
-
-    const createdWindow = await chrome.windows.create({
-      url: existing.pageUrl,
-      type: "popup",
-      focused: true,
-      width: 1280,
-      height: 880,
-    });
-
-    return {
-      open: true,
-      pageUrl: existing.pageUrl,
-      tabId: createdWindow.tabs?.[0]?.id ?? null,
-      windowId: createdWindow.id ?? null,
-      created: true,
-    };
+    return openVoiceAgentWindow();
   },
 
   /** Forward an RPC call to the active tab's content script */

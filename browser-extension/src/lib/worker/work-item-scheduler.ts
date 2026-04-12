@@ -15,6 +15,7 @@ export class WorkItemScheduler {
   private tools = new Map<WorkItemType, WorkItemTool>();
   private intervalId: ReturnType<typeof setInterval> | null = null;
   private processing = false;
+  private intervalMs = 1000;
 
   /** Register a tool to handle a specific work item type */
   register(tool: WorkItemTool): void {
@@ -25,8 +26,9 @@ export class WorkItemScheduler {
   /** Start polling for work items at the given interval */
   start(intervalMs: number): void {
     if (this.intervalId !== null) return;
-    console.log(`[scheduler] starting (interval: ${intervalMs}ms)`);
-    this.intervalId = setInterval(() => this.poll(), intervalMs);
+    this.intervalMs = Math.max(1000, Math.floor(intervalMs));
+    console.log(`[scheduler] starting (interval: ${this.intervalMs}ms)`);
+    this.intervalId = setInterval(() => this.poll(), this.intervalMs);
     // Run immediately on start as well
     this.poll();
   }
@@ -50,7 +52,9 @@ export class WorkItemScheduler {
     try {
       const rpc = await getServerRpc();
       const items = await rpc.JobApi.claimWorkItems();
-      console.log(`[scheduler] claimed ${items.length} work item(s)`);
+      if (items.length > 0) {
+        console.log(`[scheduler] claimed ${items.length} work item(s)`);
+      }
 
       for (const item of items) {
         await this.processItem(item);

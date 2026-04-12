@@ -111,6 +111,12 @@ body.aidana-voice-page {
   color: hsl(var(--muted-foreground));
 }
 
+.voice-stage-note-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+}
+
 .voice-kicker {
   display: inline-flex;
   align-items: center;
@@ -568,6 +574,59 @@ body.aidana-voice-page {
 .voice-inline-status {
   color: hsl(var(--muted-foreground));
   font-size: 0.84rem;
+}
+
+.voice-animation-status {
+  display: grid;
+  gap: 0.45rem;
+  padding: 0.85rem 0.95rem;
+  border-radius: 1rem;
+  border: 1px solid rgb(255 255 255 / 0.08);
+  background: rgb(255 255 255 / 0.03);
+}
+
+.voice-animation-status strong {
+  font-size: 0.76rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: hsl(var(--muted-foreground));
+}
+
+.voice-animation-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  width: fit-content;
+  max-width: 100%;
+  padding: 0.4rem 0.7rem;
+  border-radius: 999px;
+  border: 1px solid rgb(255 255 255 / 0.08);
+  background: rgb(255 255 255 / 0.04);
+  font-size: 0.78rem;
+  line-height: 1.3;
+}
+
+.voice-animation-badge::before {
+  content: "";
+  width: 0.45rem;
+  height: 0.45rem;
+  flex: 0 0 auto;
+  border-radius: 999px;
+  background: rgb(140 157 181);
+}
+
+.voice-animation-badge[data-mode="manual"]::before {
+  background: rgb(64 207 151);
+}
+
+.voice-animation-badge[data-mode="auto"]::before {
+  background: rgb(255 196 84);
+}
+
+.voice-test-action-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
 }
 
 @media (max-width: 1100px) {

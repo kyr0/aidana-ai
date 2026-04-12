@@ -6,11 +6,56 @@
 import Combine
 import Foundation
 
+struct ASRRuntimeConfiguration: Equatable, Sendable {
+    let wakeWord: String
+    let hotwords: [String]
+    let effectiveHotwords: [String]
+
+    var hotwordBoostingEnabled: Bool {
+        !effectiveHotwords.isEmpty
+    }
+
+    init(wakeWord: String = "", hotwords: [String] = []) {
+        let normalizedWakeWord = Self.normalizeTerm(wakeWord)
+        let normalizedHotwords = Self.normalizeUniqueTerms(hotwords)
+        let filteredHotwords = normalizedHotwords.filter {
+            normalizedWakeWord.isEmpty || $0.caseInsensitiveCompare(normalizedWakeWord) != .orderedSame
+        }
+
+        self.wakeWord = normalizedWakeWord
+        self.hotwords = filteredHotwords
+        self.effectiveHotwords = normalizedWakeWord.isEmpty ? filteredHotwords : [normalizedWakeWord] + filteredHotwords
+    }
+
+    private static func normalizeUniqueTerms(_ terms: [String]) -> [String] {
+        var seen = Set<String>()
+        var normalizedTerms: [String] = []
+
+        for term in terms {
+            let normalizedTerm = normalizeTerm(term)
+            guard !normalizedTerm.isEmpty else { continue }
+
+            let dedupeKey = normalizedTerm.lowercased()
+            guard seen.insert(dedupeKey).inserted else { continue }
+
+            normalizedTerms.append(normalizedTerm)
+        }
+
+        return normalizedTerms
+    }
+
+    private static func normalizeTerm(_ term: String) -> String {
+        term
+            .replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+}
+
 @MainActor
 final class PreferencesStore: ObservableObject {
     static let shared = PreferencesStore()
 
-    static var defaultMCPWorkspacePath: String {
+    nonisolated static var defaultMCPWorkspacePath: String {
         FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent("Documents", isDirectory: true)
             .appendingPathComponent("aidana-workspace", isDirectory: true)
@@ -136,11 +181,11 @@ final class PreferencesStore: ObservableObject {
 
     /// All hotwords including the wake word (if non-empty).
     var effectiveHotwords: [String] {
-        var list = hotwords
-        if !wakeWord.isEmpty && !list.contains(where: { $0.lowercased() == wakeWord.lowercased() }) {
-            list.insert(wakeWord, at: 0)
-        }
-        return list
+        asrRuntimeConfiguration.effectiveHotwords
+    }
+
+    var asrRuntimeConfiguration: ASRRuntimeConfiguration {
+        ASRRuntimeConfiguration(wakeWord: wakeWord, hotwords: hotwords)
     }
 
     private enum Keys {

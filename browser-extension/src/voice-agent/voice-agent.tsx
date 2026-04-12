@@ -64,16 +64,30 @@ const VOICE_DETECTOR_TUNING: VoiceDetectorOptions = Object.freeze({
 
 const HEALTH_URL = "http://localhost:31337/health";
 const ASR_URL = "ws://localhost:31337/asr";
+const ASR_CONFIG_URL = "http://localhost:31337/asr/config";
 const TTS_CONFIG_URL = "http://localhost:31337/tts/config";
 const DEFAULT_TTS_PORT = 31338;
+const DEFAULT_TTS_SPEED = 3;
+const DEFAULT_TTS_STREAMING_INTERVAL = 0.25;
+const MIN_TTS_SPEED = 0.25;
+const MAX_TTS_SPEED = 6;
+const MIN_TTS_STREAMING_INTERVAL = 0.05;
+const MAX_TTS_STREAMING_INTERVAL = 4;
 const TTS_STREAM_START_BUFFER_SECONDS = 0.18;
 const TTS_STREAM_START_LEAD_SECONDS = 0.06;
 const TTS_STREAM_PACKET_DEBUG_INTERVAL = 10;
+const THINKING_ANIMATION_URL = chrome.runtime.getURL("animations/thinking.fbx");
+const THINKING_ANIMATION_DURATION_SECONDS = 2;
+const THINKING_ANIMATION_DURATION_MS = THINKING_ANIMATION_DURATION_SECONDS * 1000;
+const AVATAR_ANIMATION_IDLE_STATUS = "Idle loop";
 
 const DEVICE_PREF_KEY = "__aidana_voice_agent_input_device";
 const MIC_PERMISSION_PREF_KEY = "__aidana_voice_agent_mic_permission";
 const AVATAR_PREF_KEY = "__aidana_voice_agent_avatar";
 const ASR_LANGUAGE_PREF_KEY = "__aidana_voice_agent_asr_language";
+const TTS_SPEED_PREF_KEY = "__aidana_voice_agent_tts_speed";
+const TTS_STREAMING_INTERVAL_PREF_KEY = "__aidana_voice_agent_tts_streaming_interval";
+const VOICE_SPACE_PREF_KEY = "__aidana_voice_agent_voice_space";
 
 const ASR_LANGUAGES = [
     { id: "german", label: "German" },
@@ -125,6 +139,39 @@ const AVATARS = [
     },
 ] as const;
 
+const VOICE_SPACES = [
+    {
+        id: "none",
+        label: "None",
+        url: null,
+        wetMix: 0,
+    },
+    {
+        id: "basement",
+        label: "Basement",
+        url: chrome.runtime.getURL("impulse-responses/ir-basement.m4a"),
+        wetMix: 0.34,
+    },
+    {
+        id: "church",
+        label: "Church",
+        url: chrome.runtime.getURL("impulse-responses/ir-church.m4a"),
+        wetMix: 0.42,
+    },
+    {
+        id: "forest",
+        label: "Forest",
+        url: chrome.runtime.getURL("impulse-responses/ir-forest.m4a"),
+        wetMix: 0.28,
+    },
+    {
+        id: "room",
+        label: "Room",
+        url: chrome.runtime.getURL("impulse-responses/ir-room.m4a"),
+        wetMix: 0.3,
+    },
+] as const;
+
 type WorkerRpc = { WorkerRpc: WorkerRpcApi };
 const rpc = await createWorkerRpcClient<WorkerRpc>();
 const { WorkerRpc } = rpc;
@@ -145,6 +192,16 @@ type OverlayMessage = {
 };
 
 type AsrLanguageId = (typeof ASR_LANGUAGES)[number]["id"];
+type VoiceSpaceId = (typeof VOICE_SPACES)[number]["id"];
+
+type ASRConfig = {
+    language: string;
+    wakeWord: string;
+    hotwords: string[];
+    effectiveHotwords: string[];
+    hotwordBoostingEnabled: boolean;
+    sampleRate: number;
+};
 
 type TTSConfig = {
     port: number;
@@ -160,10 +217,17 @@ type TTSConfig = {
     bitsPerSample: number;
 };
 
+type TTSRequestSettings = {
+    speed: number;
+    streamingInterval: number;
+};
+
 type TTSQueueItem = {
     id: string;
     text: string;
     createdAt: number;
+    speed: number;
+    streamingInterval: number;
 };
 
 type VoiceDetectionResult = {
@@ -173,6 +237,8 @@ type VoiceDetectionResult = {
     onVoiceEnd?: boolean;
 };
 
+type AvatarAnimationMode = "idle" | "manual" | "auto";
+
 type AgentState = {
     head: any | null;
     avatarReady: boolean;
@@ -181,6 +247,12 @@ type AgentState = {
     microphones: MicrophoneOption[];
     selectedDeviceId: string | null;
     selectedAsrLanguage: AsrLanguageId;
+    asrLanguageDirty: boolean;
+    selectedTtsSpeed: number;
+    ttsSpeedDirty: boolean;
+    selectedTtsStreamingInterval: number;
+    ttsStreamingIntervalDirty: boolean;
+    selectedVoiceSpace: VoiceSpaceId;
     detector: VoiceDetector | null;
     sessionActive: boolean;
     preparingSession: boolean;
@@ -206,10 +278,13 @@ type AgentState = {
     overlayMessages: OverlayMessage[];
     streamingUserMessageId: string | null;
     logLines: string[];
+    avatarAnimationMode: AvatarAnimationMode;
+    avatarAnimationStatus: string;
     currentLevel: number;
     pcmPacketsSent: number;
     asrTextPacketCount: number;
     lastAsrPacketText: string;
+    asrConfig: ASRConfig | null;
     ttsConfig: TTSConfig | null;
     ttsQueue: TTSQueueItem[];
     ttsRequestActive: boolean;
@@ -222,7 +297,11 @@ type AgentState = {
     ttsChunkRemainder: Uint8Array;
     ttsAbortController: AbortController | null;
     ttsOutputNode: GainNode | null;
+    ttsDryNode: GainNode | null;
+    ttsWetNode: GainNode | null;
+    ttsConvolverNode: ConvolverNode | null;
     ttsAnalyserNode: AnalyserNode | null;
+    ttsAppliedVoiceSpace: VoiceSpaceId | null;
     ttsScheduledSources: Set<AudioBufferSourceNode>;
     overlayAutoScrollPinned: boolean;
     destroying: boolean;
@@ -236,6 +315,12 @@ const state: AgentState = {
     microphones: [],
     selectedDeviceId: null,
     selectedAsrLanguage: ASR_LANGUAGES[0].id,
+    asrLanguageDirty: false,
+    selectedTtsSpeed: DEFAULT_TTS_SPEED,
+    ttsSpeedDirty: false,
+    selectedTtsStreamingInterval: DEFAULT_TTS_STREAMING_INTERVAL,
+    ttsStreamingIntervalDirty: false,
+    selectedVoiceSpace: VOICE_SPACES[0].id,
     detector: null,
     sessionActive: false,
     preparingSession: false,
@@ -261,10 +346,13 @@ const state: AgentState = {
     overlayMessages: [],
     streamingUserMessageId: null,
     logLines: [],
+    avatarAnimationMode: "idle",
+    avatarAnimationStatus: AVATAR_ANIMATION_IDLE_STATUS,
     currentLevel: 0,
     pcmPacketsSent: 0,
     asrTextPacketCount: 0,
     lastAsrPacketText: "",
+    asrConfig: null,
     ttsConfig: null,
     ttsQueue: [],
     ttsRequestActive: false,
@@ -277,7 +365,11 @@ const state: AgentState = {
     ttsChunkRemainder: new Uint8Array(0),
     ttsAbortController: null,
     ttsOutputNode: null,
+    ttsDryNode: null,
+    ttsWetNode: null,
+    ttsConvolverNode: null,
     ttsAnalyserNode: null,
+    ttsAppliedVoiceSpace: null,
     ttsScheduledSources: new Set<AudioBufferSourceNode>(),
     overlayAutoScrollPinned: true,
     destroying: false,
@@ -289,8 +381,142 @@ let targetMouthValue = 0;
 let currentMouthValue = 0;
 let animationLoopStarted = false;
 let overlayMarkdownDisabled = false;
+let asrConfigPromise: Promise<ASRConfig> | null = null;
 let ttsConfigPromise: Promise<TTSConfig> | null = null;
 let ttsAnalyserSamples: Uint8Array<ArrayBuffer> | null = null;
+let avatarAnimationTimer: ReturnType<typeof setTimeout> | null = null;
+const voiceSpaceBytesCache = new Map<VoiceSpaceId, ArrayBuffer>();
+const voiceSpaceBytesPromises = new Map<VoiceSpaceId, Promise<ArrayBuffer>>();
+let ttsVoiceSpaceApplyToken = 0;
+
+function clearAvatarAnimationTimer() {
+    if (avatarAnimationTimer == null) {
+        return;
+    }
+
+    clearTimeout(avatarAnimationTimer);
+    avatarAnimationTimer = null;
+}
+
+function setAvatarAnimationState(
+    mode: AvatarAnimationMode,
+    status: string,
+    rerender = true,
+) {
+    if (
+        state.avatarAnimationMode === mode &&
+        state.avatarAnimationStatus === status
+    ) {
+        if (rerender) {
+            renderSessionState();
+        }
+        return;
+    }
+
+    state.avatarAnimationMode = mode;
+    state.avatarAnimationStatus = status;
+
+    if (rerender) {
+        renderSessionState();
+    }
+}
+
+function resetAvatarAnimationState(rerender = true) {
+    clearAvatarAnimationTimer();
+    setAvatarAnimationState("idle", AVATAR_ANIMATION_IDLE_STATUS, rerender);
+}
+
+function currentAutoThinkingStatus() {
+    if (!state.avatarReady || !state.head || state.preparingSession) {
+        return null;
+    }
+
+    if (state.ttsRequestActive && !state.ttsPlaying) {
+        return "Auto thinking: waiting on TTS response";
+    }
+
+    if (state.awaitingFinal) {
+        return "Auto thinking: waiting on ASR final";
+    }
+
+    return null;
+}
+
+function scheduleAvatarThinkingCycle(mode: AvatarAnimationMode, status: string) {
+    if (!state.head || !state.avatarReady) {
+        resetAvatarAnimationState();
+        return;
+    }
+
+    clearAvatarAnimationTimer();
+    setAvatarAnimationState(mode, status);
+
+    try {
+        const animationResult = state.head.playAnimation(
+            THINKING_ANIMATION_URL,
+            null,
+            THINKING_ANIMATION_DURATION_SECONDS,
+        );
+
+        if (animationResult && typeof animationResult.catch === "function") {
+            void animationResult.catch((error: unknown) => {
+                const message = error instanceof Error ? error.message : String(error);
+                appendLog(`Thinking animation failed: ${message}`);
+                resetAvatarAnimationState();
+            });
+        }
+    } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        appendLog(`Thinking animation failed: ${message}`);
+        resetAvatarAnimationState();
+        return;
+    }
+
+    avatarAnimationTimer = setTimeout(() => {
+        avatarAnimationTimer = null;
+
+        const nextAutoStatus = currentAutoThinkingStatus();
+        if (nextAutoStatus) {
+            scheduleAvatarThinkingCycle("auto", nextAutoStatus);
+            return;
+        }
+
+        resetAvatarAnimationState();
+    }, THINKING_ANIMATION_DURATION_MS);
+}
+
+function syncAutoThinkingAnimation() {
+    const autoStatus = currentAutoThinkingStatus();
+
+    if (!autoStatus) {
+        if (state.avatarAnimationMode === "auto") {
+            resetAvatarAnimationState();
+        }
+        return;
+    }
+
+    if (state.avatarAnimationMode === "manual") {
+        return;
+    }
+
+    if (
+        state.avatarAnimationMode === "auto" &&
+        state.avatarAnimationStatus === autoStatus &&
+        avatarAnimationTimer != null
+    ) {
+        return;
+    }
+
+    if (state.avatarAnimationMode !== "auto" || state.avatarAnimationStatus !== autoStatus) {
+        appendLog(autoStatus);
+        traceVoiceAgent("avatar animation auto", {
+            status: autoStatus,
+            avatarId: state.currentAvatarId,
+        });
+    }
+
+    scheduleAvatarThinkingCycle("auto", autoStatus);
+}
 
 function q<T extends HTMLElement>(id: string): T {
     const element = document.getElementById(id);
@@ -302,6 +528,10 @@ function q<T extends HTMLElement>(id: string): T {
 
 function currentAvatar() {
     return AVATARS.find((item) => item.id === state.currentAvatarId) ?? AVATARS[0];
+}
+
+function currentVoiceSpace() {
+    return VOICE_SPACES.find((item) => item.id === state.selectedVoiceSpace) ?? VOICE_SPACES[0];
 }
 
 function activeMicrophoneLabel(): string | null {
@@ -347,6 +577,65 @@ function syncAsrLanguageSelect() {
     }
 
     select.value = state.selectedAsrLanguage;
+    select.disabled = state.preparingSession;
+}
+
+function formatTtsControlValue(value: number) {
+    return String(Math.round(value * 100) / 100);
+}
+
+function normalizeTtsControlValue(value: number, fallback: number, min: number, max: number) {
+    if (!Number.isFinite(value)) {
+        return fallback;
+    }
+
+    const rounded = Math.round(value * 100) / 100;
+    return Math.min(max, Math.max(min, rounded));
+}
+
+function normalizeTtsSpeed(value: number) {
+    return normalizeTtsControlValue(value, DEFAULT_TTS_SPEED, MIN_TTS_SPEED, MAX_TTS_SPEED);
+}
+
+function normalizeTtsStreamingInterval(value: number) {
+    return normalizeTtsControlValue(
+        value,
+        DEFAULT_TTS_STREAMING_INTERVAL,
+        MIN_TTS_STREAMING_INTERVAL,
+        MAX_TTS_STREAMING_INTERVAL,
+    );
+}
+
+function currentTtsRequestSettings(): TTSRequestSettings {
+    return {
+        speed: normalizeTtsSpeed(state.selectedTtsSpeed),
+        streamingInterval: normalizeTtsStreamingInterval(state.selectedTtsStreamingInterval),
+    };
+}
+
+function syncTtsControlInputs() {
+    const speedInput = document.getElementById("tts-speed-input") as HTMLInputElement | null;
+    if (speedInput) {
+        speedInput.value = formatTtsControlValue(state.selectedTtsSpeed);
+        speedInput.disabled = state.preparingSession;
+    }
+
+    const streamingIntervalInput = document.getElementById(
+        "tts-streaming-interval-input",
+    ) as HTMLInputElement | null;
+    if (streamingIntervalInput) {
+        streamingIntervalInput.value = formatTtsControlValue(state.selectedTtsStreamingInterval);
+        streamingIntervalInput.disabled = state.preparingSession;
+    }
+}
+
+function syncVoiceSpaceSelect() {
+    const select = document.getElementById("voice-space-select") as HTMLSelectElement | null;
+    if (!select) {
+        return;
+    }
+
+    select.value = state.selectedVoiceSpace;
     select.disabled = state.preparingSession;
 }
 
@@ -915,6 +1204,27 @@ function stopTtsPlayback(reason: string) {
         state.ttsOutputNode = null;
     }
 
+    if (state.ttsDryNode) {
+        try {
+            state.ttsDryNode.disconnect();
+        } catch { }
+        state.ttsDryNode = null;
+    }
+
+    if (state.ttsWetNode) {
+        try {
+            state.ttsWetNode.disconnect();
+        } catch { }
+        state.ttsWetNode = null;
+    }
+
+    if (state.ttsConvolverNode) {
+        try {
+            state.ttsConvolverNode.disconnect();
+        } catch { }
+        state.ttsConvolverNode = null;
+    }
+
     if (state.ttsAnalyserNode) {
         try {
             state.ttsAnalyserNode.disconnect();
@@ -922,6 +1232,8 @@ function stopTtsPlayback(reason: string) {
         state.ttsAnalyserNode = null;
         ttsAnalyserSamples = null;
     }
+
+    state.ttsAppliedVoiceSpace = null;
 
     finalizeAssistantOverlayStreaming();
 
@@ -936,6 +1248,7 @@ function stopTtsPlayback(reason: string) {
     }
 
     renderSessionState();
+    syncAutoThinkingAnimation();
 }
 
 async function loadTtsConfig(force = false): Promise<TTSConfig> {
@@ -967,14 +1280,15 @@ async function loadTtsConfig(force = false): Promise<TTSConfig> {
             langCode: typeof data.langCode === "string" && data.langCode.length > 0
                 ? data.langCode
                 : "german",
-            speed: typeof data.speed === "number" && data.speed > 0 ? data.speed : 3,
+            speed: normalizeTtsSpeed(typeof data.speed === "number" ? data.speed : DEFAULT_TTS_SPEED),
             gender: typeof data.gender === "string" && data.gender.length > 0
                 ? data.gender
                 : "male",
-            streamingInterval:
-                typeof data.streamingInterval === "number" && data.streamingInterval > 0
+            streamingInterval: normalizeTtsStreamingInterval(
+                typeof data.streamingInterval === "number"
                     ? data.streamingInterval
-                    : 0.25,
+                    : DEFAULT_TTS_STREAMING_INTERVAL,
+            ),
             sampleRate: typeof data.sampleRate === "number" && data.sampleRate > 0
                 ? data.sampleRate
                 : 24000,
@@ -991,16 +1305,24 @@ async function loadTtsConfig(force = false): Promise<TTSConfig> {
         }
 
         state.ttsConfig = config;
+        if (!state.ttsSpeedDirty) {
+            state.selectedTtsSpeed = config.speed;
+        }
+        if (!state.ttsStreamingIntervalDirty) {
+            state.selectedTtsStreamingInterval = config.streamingInterval;
+        }
         traceVoiceAgent("tts config loaded", {
             port: config.port,
             model: config.model,
             langCode: config.langCode,
+            speed: config.speed,
             streamingInterval: config.streamingInterval,
             sampleRate: config.sampleRate,
         });
         if (!hadConfig) {
             appendLog(`TTS config ready on port ${config.port} (${config.model}).`);
         }
+        renderSessionState();
         return config;
     })().finally(() => {
         ttsConfigPromise = null;
@@ -1009,11 +1331,273 @@ async function loadTtsConfig(force = false): Promise<TTSConfig> {
     return ttsConfigPromise;
 }
 
+async function loadAsrConfig(force = false): Promise<ASRConfig> {
+    if (!force && state.asrConfig) {
+        return state.asrConfig;
+    }
+
+    if (!force && asrConfigPromise) {
+        return asrConfigPromise;
+    }
+
+    const hadConfig = state.asrConfig != null;
+    asrConfigPromise = (async () => {
+        const response = await fetch(ASR_CONFIG_URL, { cache: "no-store" });
+        if (!response.ok) {
+            throw new Error(`Aidana ASR config request failed with status ${response.status}.`);
+        }
+
+        const data = (await response.json()) as Partial<ASRConfig>;
+        const hotwords = Array.isArray(data.hotwords)
+            ? data.hotwords.filter((item): item is string => typeof item === "string")
+            : [];
+        const effectiveHotwords = Array.isArray(data.effectiveHotwords)
+            ? data.effectiveHotwords.filter((item): item is string => typeof item === "string")
+            : hotwords;
+        const language = typeof data.language === "string" && data.language.length > 0
+            ? data.language
+            : "auto";
+
+        const config: ASRConfig = {
+            language,
+            wakeWord: typeof data.wakeWord === "string" ? data.wakeWord : "",
+            hotwords,
+            effectiveHotwords,
+            hotwordBoostingEnabled:
+                typeof data.hotwordBoostingEnabled === "boolean"
+                    ? data.hotwordBoostingEnabled
+                    : effectiveHotwords.length > 0,
+            sampleRate: typeof data.sampleRate === "number" && data.sampleRate > 0
+                ? data.sampleRate
+                : TARGET_SAMPLE_RATE,
+        };
+
+        state.asrConfig = config;
+        if (
+            !state.asrLanguageDirty &&
+            ASR_LANGUAGES.some((item) => item.id === config.language)
+        ) {
+            state.selectedAsrLanguage = config.language as AsrLanguageId;
+        }
+
+        traceVoiceAgent("asr config loaded", {
+            language: config.language,
+            sampleRate: config.sampleRate,
+            hotwordBoostingEnabled: config.hotwordBoostingEnabled,
+            effectiveHotwords: config.effectiveHotwords.length,
+        });
+        if (!hadConfig) {
+            appendLog(`ASR config ready (${config.language}, ${config.sampleRate} Hz).`);
+        }
+        renderSessionState();
+        return config;
+    })().finally(() => {
+        asrConfigPromise = null;
+    });
+
+    return asrConfigPromise;
+}
+
+async function initializeVoiceAgentConfig() {
+    const [asrResult, ttsResult] = await Promise.allSettled([
+        loadAsrConfig(),
+        loadTtsConfig(),
+    ]);
+
+    if (asrResult.status === "rejected") {
+        const message = asrResult.reason instanceof Error
+            ? asrResult.reason.message
+            : String(asrResult.reason);
+        appendLog(`ASR config unavailable: ${message}`);
+    }
+
+    if (ttsResult.status === "rejected") {
+        const message = ttsResult.reason instanceof Error
+            ? ttsResult.reason.message
+            : String(ttsResult.reason);
+        appendLog(`TTS config unavailable: ${message}`);
+    }
+
+    renderSessionState();
+    return {
+        asrLoaded: asrResult.status === "fulfilled",
+        ttsLoaded: ttsResult.status === "fulfilled",
+    };
+}
+
 function appendUint8Arrays(left: Uint8Array, right: Uint8Array) {
     const merged = new Uint8Array(left.length + right.length);
     merged.set(left);
     merged.set(right, left.length);
     return merged;
+}
+
+async function loadVoiceSpaceBytes(spaceId: VoiceSpaceId) {
+    const cached = voiceSpaceBytesCache.get(spaceId);
+    if (cached) {
+        traceVoiceAgent("voice-space asset cache hit", {
+            id: spaceId,
+            bytes: cached.byteLength,
+        });
+        return cached;
+    }
+
+    const inflight = voiceSpaceBytesPromises.get(spaceId);
+    if (inflight) {
+        traceVoiceAgent("voice-space asset awaiting existing request", {
+            id: spaceId,
+        });
+        return inflight;
+    }
+
+    const space = VOICE_SPACES.find((item) => item.id === spaceId);
+    if (!space?.url) {
+        throw new Error(`Voice space ${spaceId} does not have an impulse response asset.`);
+    }
+
+    traceVoiceAgent("voice-space asset fetch start", {
+        id: space.id,
+        label: space.label,
+        url: space.url,
+    });
+
+    const request = fetch(space.url)
+        .then(async (response) => {
+            if (!response.ok) {
+                throw new Error(`Impulse response download failed (${response.status}).`);
+            }
+
+            const bytes = await response.arrayBuffer();
+            voiceSpaceBytesCache.set(spaceId, bytes);
+            traceVoiceAgent("voice-space asset fetch complete", {
+                id: space.id,
+                label: space.label,
+                bytes: bytes.byteLength,
+            });
+            return bytes;
+        })
+        .finally(() => {
+            voiceSpaceBytesPromises.delete(spaceId);
+        });
+
+    voiceSpaceBytesPromises.set(spaceId, request);
+    return request;
+}
+
+async function applyCurrentVoiceSpace() {
+    const head = state.head;
+    if (!head || typeof head.setReverb !== "function") {
+        traceVoiceAgent("voice-space apply deferred", {
+            hasHead: !!head,
+            avatarReady: state.avatarReady,
+            selectedVoiceSpace: state.selectedVoiceSpace,
+        });
+        return;
+    }
+
+    const space = currentVoiceSpace();
+    const applyToken = ++ttsVoiceSpaceApplyToken;
+    state.ttsAppliedVoiceSpace = space.url ? null : space.id;
+
+    traceVoiceAgent("voice-space apply begin", {
+        id: space.id,
+        label: space.label,
+        url: space.url,
+        sessionActive: state.sessionActive,
+        avatarReady: state.avatarReady,
+    });
+    console.log("[voice-agent] applying voice space", {
+        id: space.id,
+        label: space.label,
+        url: space.url,
+        sessionActive: state.sessionActive,
+        avatarReady: state.avatarReady,
+    });
+
+    if (!space.url) {
+        await head.setReverb(null);
+        state.ttsAppliedVoiceSpace = space.id;
+        traceVoiceAgent("voice-space applied", {
+            id: space.id,
+            label: space.label,
+            mode: "dry",
+        });
+        console.log("[voice-agent] voice space applied", {
+            id: space.id,
+            label: space.label,
+            mode: "dry",
+        });
+        appendLog("Voice space None applied as a dry TalkingHead reverb impulse.");
+        return;
+    }
+
+    try {
+        const encoded = await loadVoiceSpaceBytes(space.id);
+        if (
+            applyToken !== ttsVoiceSpaceApplyToken ||
+            state.head !== head ||
+            state.selectedVoiceSpace !== space.id
+        ) {
+            return;
+        }
+
+        traceVoiceAgent("voice-space asset ready", {
+            id: space.id,
+            label: space.label,
+            bytes: encoded.byteLength,
+            cached: voiceSpaceBytesCache.has(space.id),
+        });
+        console.log("[voice-agent] voice space asset ready", {
+            id: space.id,
+            label: space.label,
+            bytes: encoded.byteLength,
+            cached: voiceSpaceBytesCache.has(space.id),
+        });
+
+        await head.setReverb(space.url);
+        if (
+            applyToken !== ttsVoiceSpaceApplyToken ||
+            state.head !== head ||
+            state.selectedVoiceSpace !== space.id
+        ) {
+            return;
+        }
+
+        state.ttsAppliedVoiceSpace = space.id;
+        traceVoiceAgent("voice-space applied", {
+            id: space.id,
+            label: space.label,
+            url: space.url,
+        });
+        console.log("[voice-agent] voice space applied", {
+            id: space.id,
+            label: space.label,
+            url: space.url,
+        });
+        appendLog(`Voice space ${space.label} applied to TalkingHead audio output.`);
+    } catch (error) {
+        if (
+            applyToken !== ttsVoiceSpaceApplyToken ||
+            state.head !== head ||
+            state.selectedVoiceSpace !== space.id
+        ) {
+            return;
+        }
+
+        const message = error instanceof Error ? error.message : String(error);
+        state.ttsAppliedVoiceSpace = VOICE_SPACES[0].id;
+        traceVoiceAgent("voice-space apply failed", {
+            id: space.id,
+            label: space.label,
+            message,
+        });
+        console.log("[voice-agent] voice space apply failed", {
+            id: space.id,
+            label: space.label,
+            message,
+        });
+        appendLog(`Voice space ${space.label} failed to load: ${message}`);
+    }
 }
 
 function decodeTtsPcm16Le(bytes: Uint8Array) {
@@ -1036,14 +1620,29 @@ function ensureTtsOutputNode() {
 
     if (!state.ttsOutputNode) {
         const outputNode = audioCtx.createGain();
+        const dryNode = audioCtx.createGain();
+        const wetNode = audioCtx.createGain();
+        const convolverNode = audioCtx.createConvolver();
         const analyserNode = audioCtx.createAnalyser();
         outputNode.gain.value = 1;
+        dryNode.gain.value = 1;
+        wetNode.gain.value = 0;
         analyserNode.fftSize = 1024;
         analyserNode.smoothingTimeConstant = 0.2;
-        outputNode.connect(analyserNode);
+
+        outputNode.connect(dryNode);
+        outputNode.connect(convolverNode);
+        convolverNode.connect(wetNode);
+        dryNode.connect(analyserNode);
+        wetNode.connect(analyserNode);
         analyserNode.connect(audioCtx.destination);
+
         state.ttsOutputNode = outputNode;
+        state.ttsDryNode = dryNode;
+        state.ttsWetNode = wetNode;
+        state.ttsConvolverNode = convolverNode;
         state.ttsAnalyserNode = analyserNode;
+        state.ttsAppliedVoiceSpace = null;
         ttsAnalyserSamples = null;
     }
 
@@ -1191,6 +1790,14 @@ function ingestTtsPcmBytes(chunk: Uint8Array, head: any) {
     return pcmBytes.byteLength;
 }
 
+function buildEffectiveTtsConfig(config: TTSConfig, settings: TTSRequestSettings): TTSConfig {
+    return {
+        ...config,
+        speed: normalizeTtsSpeed(settings.speed),
+        streamingInterval: normalizeTtsStreamingInterval(settings.streamingInterval),
+    };
+}
+
 function buildTtsRequestPayload(text: string, config: TTSConfig) {
     const payload: Record<string, unknown> = {
         model: config.model,
@@ -1224,7 +1831,11 @@ async function streamTtsJob(job: TTSQueueItem) {
             return;
         }
 
-        const config = await loadTtsConfig();
+        const baseConfig = await loadTtsConfig();
+        const config = buildEffectiveTtsConfig(baseConfig, {
+            speed: job.speed,
+            streamingInterval: job.streamingInterval,
+        });
         await ensureAvatarReady();
 
         const head = state.head;
@@ -1237,6 +1848,7 @@ async function streamTtsJob(job: TTSQueueItem) {
         state.ttsAbortController = new AbortController();
         state.ttsChunkRemainder = new Uint8Array(0);
         renderSessionState();
+        syncAutoThinkingAnimation();
 
         const lipsyncLang = currentTalkingHeadLipsyncLang(config);
         const wordTimeline = buildApproximateTtsWordTimeline(normalizedText, config);
@@ -1252,6 +1864,7 @@ async function streamTtsJob(job: TTSQueueItem) {
             () => {
                 state.ttsPlaying = true;
                 renderSessionState();
+                syncAutoThinkingAnimation();
             },
             () => {
                 state.ttsPlaying = false;
@@ -1282,6 +1895,8 @@ async function streamTtsJob(job: TTSQueueItem) {
             url: currentTtsUrl(),
             port: config.port,
             text: normalizedText,
+            speed: config.speed,
+            streamingInterval: config.streamingInterval,
         });
 
         const response = await fetch(currentTtsUrl(), {
@@ -1369,6 +1984,7 @@ async function streamTtsJob(job: TTSQueueItem) {
         state.ttsChunkRemainder = new Uint8Array(0);
         renderSessionState();
         releaseTtsGateIfIdle();
+        syncAutoThinkingAnimation();
     }
 }
 
@@ -1398,16 +2014,23 @@ function queueTtsEcho(text: string) {
         return;
     }
 
+    const requestSettings = currentTtsRequestSettings();
     state.ttsQueue.push({
         id: createOverlayMessageId(),
         text: normalizedText,
         createdAt: Date.now(),
+        speed: requestSettings.speed,
+        streamingInterval: requestSettings.streamingInterval,
     });
     traceVoiceAgent("tts queued", {
         queueDepth: state.ttsQueue.length,
         text: normalizedText,
+        speed: requestSettings.speed,
+        streamingInterval: requestSettings.streamingInterval,
     });
-    appendLog(`Queued transcript for streamed TTS (${normalizedText.length} chars).`);
+    appendLog(
+        `Queued transcript for streamed TTS (${normalizedText.length} chars, speed ${formatTtsControlValue(requestSettings.speed)}, stream ${formatTtsControlValue(requestSettings.streamingInterval)}s).`,
+    );
     renderSessionState();
     void pumpTtsQueue();
 }
@@ -1462,6 +2085,8 @@ function updateLevelIndicator() {
 
 function renderSessionState() {
     q("selected-microphone").textContent = selectedMicrophoneLabel();
+    q("avatar-animation-status").textContent = state.avatarAnimationStatus;
+    q("avatar-animation-status").dataset.mode = state.avatarAnimationMode;
     q("voice-inline-status").textContent = state.ttsGateActive
         ? "Aidana is playing streamed local TTS audio and will resume microphone capture automatically when the playback buffer drains."
         : state.sessionActive
@@ -1533,8 +2158,13 @@ function renderSessionState() {
     q<HTMLButtonElement>("change-microphone").disabled = state.preparingSession;
     q<HTMLButtonElement>("deactivate-session").disabled =
         !state.sessionActive && !state.awaitingFinal;
+    q<HTMLButtonElement>("play-thinking-test").disabled =
+        !state.avatarReady || state.preparingSession || state.ttsGateActive;
+    q<HTMLButtonElement>("tts-reset-defaults").disabled = state.preparingSession;
     syncAvatarSelect();
     syncAsrLanguageSelect();
+    syncTtsControlInputs();
+    syncVoiceSpaceSelect();
 }
 
 function rememberPrerollFrame(frame: Float32Array) {
@@ -1686,6 +2316,7 @@ async function handleAsrMessage(rawData: unknown) {
         state.socketState = "idle";
         updateTranscriptPanels();
         closeAsrSocket(1000, "Utterance complete");
+        syncAutoThinkingAnimation();
         setStatus(
             "Listening",
             "Aidana is ready for the next utterance. Speak again whenever you are ready.",
@@ -1755,6 +2386,7 @@ function openAsrSocket() {
         state.awaitingFinal = false;
         state.websocketQueue = [];
         renderSessionState();
+        syncAutoThinkingAnimation();
         setStatus(
             "ASR Connection Error",
             "Aidana could not keep the localhost ASR websocket open. Check that the local runtime is still healthy.",
@@ -1783,6 +2415,7 @@ function openAsrSocket() {
         state.socketState = state.sessionActive ? "idle" : "error";
         finalizeStreamingUserOverlay(currentStreamingUtteranceText());
         renderSessionState();
+        syncAutoThinkingAnimation();
 
         if (!state.destroying && state.sessionActive && event.code !== 1000) {
             setStatus(
@@ -1812,6 +2445,7 @@ function beginUtterance(
     resetAsrDebugCounters();
     state.overlayAutoScrollPinned = true;
     renderSessionState();
+    syncAutoThinkingAnimation();
     traceVoiceAgent("utterance started", {
         trigger,
         bufferedFrames: bufferedFrames.length,
@@ -1840,6 +2474,7 @@ function flushUtterance() {
     state.socketState = state.socket?.readyState === WebSocket.OPEN
         ? "waiting"
         : "connecting";
+    syncAutoThinkingAnimation();
 
     traceVoiceAgent("utterance flushing", {
         pcmPacketsSent: state.pcmPacketsSent,
@@ -1967,7 +2602,24 @@ function ensureAnimationLoop() {
     requestAnimationFrame(mouthAnimationLoop);
 }
 
+async function playThinkingTestAnimation() {
+    if (!state.head || !state.avatarReady) {
+        appendLog("Thinking animation test ignored because the avatar is not ready yet.");
+        return;
+    }
+
+    appendLog(`Playing thinking animation for ${THINKING_ANIMATION_DURATION_SECONDS}s.`);
+    traceVoiceAgent("avatar animation test", {
+        name: "thinking",
+        durationSeconds: THINKING_ANIMATION_DURATION_SECONDS,
+        avatarId: state.currentAvatarId,
+    });
+    scheduleAvatarThinkingCycle("manual", `Manual thinking test (${THINKING_ANIMATION_DURATION_SECONDS}s)`);
+}
+
 function resetAvatarStage() {
+    resetAvatarAnimationState(false);
+
     try {
         state.head?.stop?.();
     } catch { }
@@ -2049,6 +2701,8 @@ async function ensureAvatarReady() {
     state.loadedAvatarId = avatar.id;
     findMouthMesh(head);
     ensureAnimationLoop();
+    void applyCurrentVoiceSpace();
+    syncAutoThinkingAnimation();
 }
 
 async function teardownAudioSession() {
@@ -2085,7 +2739,11 @@ async function teardownAudioSession() {
     state.muteNode = null;
     state.residual = new Float32Array(0);
     state.ttsOutputNode = null;
+    state.ttsDryNode = null;
+    state.ttsWetNode = null;
+    state.ttsConvolverNode = null;
     state.ttsAnalyserNode = null;
+    state.ttsAppliedVoiceSpace = null;
     ttsAnalyserSamples = null;
     resetTtsPendingBuffers();
 }
@@ -2318,6 +2976,8 @@ async function startVoiceSession(deviceId: string | null) {
 
         updateTranscriptPanels();
         renderSessionState();
+        syncAutoThinkingAnimation();
+        void applyCurrentVoiceSpace();
 
         const microphoneName = activeMicrophoneLabel() ?? "the selected microphone";
         setListeningStatus();
@@ -2411,12 +3071,104 @@ async function selectAsrLanguage(languageId: string) {
     }
 
     state.selectedAsrLanguage = nextLanguage.id;
+    state.asrLanguageDirty = true;
     renderSessionState();
     await WorkerRpc.setPrefValue(ASR_LANGUAGE_PREF_KEY, nextLanguage.id, true);
 
     appendLog(
         `ASR language hint set to ${nextLanguage.label}.${state.sessionActive ? " It will apply to the next utterance." : ""}`,
     );
+}
+
+async function selectTtsSpeed(rawValue: string) {
+    const parsed = Number(rawValue);
+    if (!Number.isFinite(parsed)) {
+        syncTtsControlInputs();
+        return;
+    }
+
+    const nextSpeed = normalizeTtsSpeed(parsed);
+    if (nextSpeed === state.selectedTtsSpeed) {
+        syncTtsControlInputs();
+        return;
+    }
+
+    state.selectedTtsSpeed = nextSpeed;
+    state.ttsSpeedDirty = true;
+    renderSessionState();
+    await WorkerRpc.setPrefValue(TTS_SPEED_PREF_KEY, nextSpeed, true);
+    appendLog(`TTS speed set to ${formatTtsControlValue(nextSpeed)}. Newly queued speech will use it.`);
+}
+
+async function selectTtsStreamingInterval(rawValue: string) {
+    const parsed = Number(rawValue);
+    if (!Number.isFinite(parsed)) {
+        syncTtsControlInputs();
+        return;
+    }
+
+    const nextStreamingInterval = normalizeTtsStreamingInterval(parsed);
+    if (nextStreamingInterval === state.selectedTtsStreamingInterval) {
+        syncTtsControlInputs();
+        return;
+    }
+
+    state.selectedTtsStreamingInterval = nextStreamingInterval;
+    state.ttsStreamingIntervalDirty = true;
+    renderSessionState();
+    await WorkerRpc.setPrefValue(TTS_STREAMING_INTERVAL_PREF_KEY, nextStreamingInterval, true);
+    appendLog(
+        `TTS stream interval set to ${formatTtsControlValue(nextStreamingInterval)}s. Newly queued speech will use it.`,
+    );
+}
+
+async function resetTtsRequestSettings() {
+    let config = state.ttsConfig;
+
+    try {
+        config = await loadTtsConfig(true);
+    } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        appendLog(`TTS defaults refresh failed, using last known defaults: ${message}`);
+    }
+
+    const nextSpeed = normalizeTtsSpeed(config?.speed ?? DEFAULT_TTS_SPEED);
+    const nextStreamingInterval = normalizeTtsStreamingInterval(
+        config?.streamingInterval ?? DEFAULT_TTS_STREAMING_INTERVAL,
+    );
+
+    state.selectedTtsSpeed = nextSpeed;
+    state.ttsSpeedDirty = false;
+    state.selectedTtsStreamingInterval = nextStreamingInterval;
+    state.ttsStreamingIntervalDirty = false;
+    renderSessionState();
+
+    await Promise.all([
+        WorkerRpc.setPrefValue(TTS_SPEED_PREF_KEY, null, true),
+        WorkerRpc.setPrefValue(TTS_STREAMING_INTERVAL_PREF_KEY, null, true),
+    ]);
+
+    appendLog(
+        `TTS controls reset to Aidana defaults (${formatTtsControlValue(nextSpeed)}, ${formatTtsControlValue(nextStreamingInterval)}s).`,
+    );
+}
+
+async function selectVoiceSpace(spaceId: string) {
+    const nextSpace = VOICE_SPACES.find((item) => item.id === spaceId);
+    if (!nextSpace || nextSpace.id === state.selectedVoiceSpace) {
+        syncVoiceSpaceSelect();
+        return;
+    }
+
+    state.selectedVoiceSpace = nextSpace.id;
+    renderSessionState();
+    await WorkerRpc.setPrefValue(VOICE_SPACE_PREF_KEY, nextSpace.id, true);
+
+    appendLog(
+        `Voice space set to ${nextSpace.label}.${state.sessionActive ? "" : " It will apply the next time Aidana speaks."}`,
+    );
+
+    await applyCurrentVoiceSpace();
 }
 
 async function selectAvatar(avatarId: string) {
@@ -2538,6 +3290,51 @@ const App: FC = () => (
                                 Activate the session to grant microphone access and start local
                                 ASR streaming.
                             </div>
+                            <div class="voice-animation-status">
+                                <strong>Avatar animation</strong>
+                                <span
+                                    id="avatar-animation-status"
+                                    class="voice-animation-badge"
+                                    data-mode="idle"
+                                >
+                                    Idle loop
+                                </span>
+                            </div>
+                            <div class="voice-test-action-row">
+                                <Button
+                                    id="play-thinking-test"
+                                    variant="outline"
+                                    onClick={() => {
+                                        void playThinkingTestAnimation();
+                                    }}
+                                >
+                                    Play Thinking (2s)
+                                </Button>
+                            </div>
+                        </div>
+                    </CardContent>
+                </Card>
+
+                <Card>
+                    <CardHeader>
+                        <CardTitle>Voice Space</CardTitle>
+                        <CardDescription>
+                            Apply a local impulse response to Aidana speech playback. This
+                            affects TTS only and keeps microphone capture dry.
+                        </CardDescription>
+                    </CardHeader>
+                    <CardContent class="space-y-4">
+                        <div class="grid gap-2">
+                            <Label htmlFor="voice-space-select">Impulse Response</Label>
+                            <select id="voice-space-select" class="voice-device-select">
+                                {VOICE_SPACES.map((space) => (
+                                    <option value={space.id}>{space.label}</option>
+                                ))}
+                            </select>
+                        </div>
+                        <div class="voice-inline-status">
+                            None leaves playback dry. Basement, Church, Forest, and Room use
+                            the packaged TalkingHead impulse responses.
                         </div>
                     </CardContent>
                 </Card>
@@ -2616,6 +3413,50 @@ const App: FC = () => (
                                     ))}
                                 </select>
                             </div>
+
+                            <div class="voice-avatar-picker">
+                                <Label htmlFor="tts-speed-input">TTS Speed</Label>
+                                <input
+                                    id="tts-speed-input"
+                                    class="voice-device-select voice-avatar-select"
+                                    type="number"
+                                    min={MIN_TTS_SPEED}
+                                    max={MAX_TTS_SPEED}
+                                    step="0.05"
+                                    inputMode="decimal"
+                                />
+                            </div>
+
+                            <div class="voice-avatar-picker">
+                                <Label htmlFor="tts-streaming-interval-input">TTS Stream Int.</Label>
+                                <input
+                                    id="tts-streaming-interval-input"
+                                    class="voice-device-select voice-avatar-select"
+                                    type="number"
+                                    min={MIN_TTS_STREAMING_INTERVAL}
+                                    max={MAX_TTS_STREAMING_INTERVAL}
+                                    step="0.05"
+                                    inputMode="decimal"
+                                />
+                            </div>
+                        </div>
+
+                        <div class="voice-stage-note">
+                            TTS Speed and Stream Int. initialize from Aidana Preferences. Each
+                            queued utterance snapshots the current values, so later changes only
+                            affect newly queued speech.
+                        </div>
+                        <div class="voice-stage-note-actions">
+                            <Button
+                                id="tts-reset-defaults"
+                                size="sm"
+                                variant="outline"
+                                onClick={() => {
+                                    void resetTtsRequestSettings();
+                                }}
+                            >
+                                Reset To Aidana Defaults
+                            </Button>
                         </div>
                     </div>
 
@@ -2669,6 +3510,19 @@ q<HTMLSelectElement>("asr-language-select").addEventListener("change", (event) =
     void selectAsrLanguage(nextLanguageId);
 });
 
+q<HTMLInputElement>("tts-speed-input").addEventListener("change", (event) => {
+    void selectTtsSpeed((event.currentTarget as HTMLInputElement).value);
+});
+
+q<HTMLInputElement>("tts-streaming-interval-input").addEventListener("change", (event) => {
+    void selectTtsStreamingInterval((event.currentTarget as HTMLInputElement).value);
+});
+
+q<HTMLSelectElement>("voice-space-select").addEventListener("change", (event) => {
+    const nextSpaceId = (event.currentTarget as HTMLSelectElement).value;
+    void selectVoiceSpace(nextSpaceId);
+});
+
 updateTranscriptPanels();
 renderOverlayMessages();
 updateLevelIndicator();
@@ -2678,6 +3532,8 @@ const overlayScrollHost = document.getElementById("voice-overlay-scroll") as HTM
 overlayScrollHost?.addEventListener("scroll", () => {
     state.overlayAutoScrollPinned = isOverlayNearBottom(overlayScrollHost);
 });
+
+const voiceAgentConfigStatus = await initializeVoiceAgentConfig();
 
 const savedDevice = await WorkerRpc.getPrefValue(DEVICE_PREF_KEY, true);
 if (typeof savedDevice === "string" && savedDevice.length > 0) {
@@ -2692,12 +3548,40 @@ if (
     state.currentAvatarId = savedAvatar;
 }
 
-const savedAsrLanguage = await WorkerRpc.getPrefValue(ASR_LANGUAGE_PREF_KEY, true);
+const savedTtsSpeed = await WorkerRpc.getPrefValue(TTS_SPEED_PREF_KEY, true);
+if (typeof savedTtsSpeed === "number" && Number.isFinite(savedTtsSpeed)) {
+    state.selectedTtsSpeed = normalizeTtsSpeed(savedTtsSpeed);
+    state.ttsSpeedDirty = true;
+}
+
+const savedTtsStreamingInterval = await WorkerRpc.getPrefValue(
+    TTS_STREAMING_INTERVAL_PREF_KEY,
+    true,
+);
 if (
-    typeof savedAsrLanguage === "string" &&
-    ASR_LANGUAGES.some((language) => language.id === savedAsrLanguage)
+    typeof savedTtsStreamingInterval === "number" &&
+    Number.isFinite(savedTtsStreamingInterval)
 ) {
-    state.selectedAsrLanguage = savedAsrLanguage as AsrLanguageId;
+    state.selectedTtsStreamingInterval = normalizeTtsStreamingInterval(savedTtsStreamingInterval);
+    state.ttsStreamingIntervalDirty = true;
+}
+
+if (!voiceAgentConfigStatus.asrLoaded) {
+    const savedAsrLanguage = await WorkerRpc.getPrefValue(ASR_LANGUAGE_PREF_KEY, true);
+    if (
+        typeof savedAsrLanguage === "string" &&
+        ASR_LANGUAGES.some((language) => language.id === savedAsrLanguage)
+    ) {
+        state.selectedAsrLanguage = savedAsrLanguage as AsrLanguageId;
+    }
+}
+
+const savedVoiceSpace = await WorkerRpc.getPrefValue(VOICE_SPACE_PREF_KEY, true);
+if (
+    typeof savedVoiceSpace === "string" &&
+    VOICE_SPACES.some((space) => space.id === savedVoiceSpace)
+) {
+    state.selectedVoiceSpace = savedVoiceSpace as VoiceSpaceId;
 }
 
 const savedPermission = await WorkerRpc.getPrefValue(MIC_PERMISSION_PREF_KEY, true);

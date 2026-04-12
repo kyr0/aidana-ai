@@ -14,6 +14,10 @@ export default defineConfig({
     minify: false,
     rollupOptions: {
       input: {
+        popup: resolve(
+          __dirname,
+          "src/popup/popup.html",
+        ),
         voiceAgent: resolve(
           __dirname,
           "src/voice-agent/voice-agent.html",

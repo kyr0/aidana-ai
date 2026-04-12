@@ -87,6 +87,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             await self.aiServer.setWakeWordProvider {
                 UserDefaults.standard.string(forKey: "preferences.wakeWord") ?? ""
             }
+            do {
+                _ = try await self.aiServer.setASRRuntimeConfiguration(self.currentASRRuntimeConfiguration())
+            } catch {
+                self.logger.error("Initial ASR runtime configuration failed: \(error)")
+                await MainActor.run {
+                    self.logStore.append("ASR config error: \(error.localizedDescription)")
+                }
+            }
             await self.ttsServer.setLogCallback { message in
                 Task { @MainActor in
                     ttsLogRef.append(message)
@@ -158,6 +166,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                     self.logger.error("ASR warmup failed: \(error)")
                     await MainActor.run {
                         self.logStore.append("ASR warmup failed: \(error.localizedDescription)")
+                    }
+                }
+
+                do {
+                    _ = try await self.aiServer.setASRRuntimeConfiguration(self.currentASRRuntimeConfiguration())
+                } catch {
+                    self.logger.error("ASR hotword configuration failed during startup: \(error)")
+                    await MainActor.run {
+                        self.logStore.append("ASR hotword setup failed: \(error.localizedDescription)")
                     }
                 }
 
@@ -283,7 +300,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
         return .init(
             mcpPort: preferences.mcpPort,
-            workQueuePort: 3210,
+            workQueuePort: MCPServer.defaultWorkQueuePort,
             workspacePath: effectiveWorkspacePath
         )
     }
@@ -540,6 +557,53 @@ private extension AppDelegate {
             _ = self?.enqueueMCPAction(.applyRuntimeSettings)
         }
         .store(in: &cancellables)
+
+        Publishers.CombineLatest(preferences.$wakeWord, preferences.$hotwords)
+            .map { ASRRuntimeConfiguration(wakeWord: $0, hotwords: $1) }
+            .removeDuplicates()
+            .dropFirst()
+            .debounce(for: .milliseconds(350), scheduler: RunLoop.main)
+            .sink { [weak self] configuration in
+                self?.applyASRRuntimeConfiguration(configuration)
+            }
+            .store(in: &cancellables)
+    }
+
+    func currentASRRuntimeConfiguration() -> ASRRuntimeConfiguration {
+        preferences.asrRuntimeConfiguration
+    }
+
+    func applyASRRuntimeConfiguration(_ configuration: ASRRuntimeConfiguration) {
+        let statusMessage = configuration.hotwordBoostingEnabled
+            ? "Applying updated ASR hotwords…"
+            : "Disabling ASR hotword boosting…"
+        logStore.append(statusMessage)
+
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+
+            do {
+                let didChange = try await self.aiServer.setASRRuntimeConfiguration(configuration)
+                guard didChange else { return }
+
+                let asrReady = await self.aiServer.modelManager.asrReady
+                guard asrReady else {
+                    self.logStore.append("ASR hotword configuration queued for model startup")
+                    return
+                }
+
+                if configuration.hotwordBoostingEnabled {
+                    self.logStore.append(
+                        "ASR hotword boosting active for \(configuration.effectiveHotwords.count) term(s)"
+                    )
+                } else {
+                    self.logStore.append("ASR hotword boosting disabled")
+                }
+            } catch {
+                self.logger.error("ASR runtime configuration failed: \(error)")
+                self.logStore.append("ASR hotword update failed: \(error.localizedDescription)")
+            }
+        }
     }
 
 }

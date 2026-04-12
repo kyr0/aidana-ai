@@ -7,6 +7,12 @@ import Foundation
 import os
 
 actor MCPServer {
+    static let defaultTransport = "http"
+    static let defaultHost = "127.0.0.1"
+    static let defaultPath = "/mcp"
+    static let defaultHealthPath = "/healthz"
+    static let defaultWorkQueuePort = 3210
+
     enum RuntimeKind: String, Sendable {
         case node
         case bun
@@ -50,9 +56,9 @@ actor MCPServer {
     }
 
     private let logger = Logger(subsystem: "de.aronhomberg.aidana", category: "MCPServer")
-    private let mcpTransport = "http"
-    private let mcpHost = "127.0.0.1"
-    private let mcpPath = "/mcp"
+    private let mcpTransport = MCPServer.defaultTransport
+    private let mcpHost = MCPServer.defaultHost
+    private let mcpPath = MCPServer.defaultPath
     private let defaultClientConfigDirectoryName = ".aidana"
     private let defaultClientConfigFileName = "mcp.json"
     private let defaultClientConfigServerName = "aidana"
@@ -100,6 +106,8 @@ actor MCPServer {
         environment["AIDANA_MCP_TRANSPORT"] = mcpTransport
         environment["AIDANA_MCP_HOST"] = mcpHost
         environment["AIDANA_MCP_PORT"] = "\(configuration.mcpPort)"
+        environment["AIDANA_MCP_PATH"] = mcpPath
+        environment["AIDANA_MCP_HEALTH_PATH"] = Self.defaultHealthPath
         environment["AIDANA_WORK_QUEUE_PORT"] = "\(configuration.workQueuePort)"
         environment["AIDANA_WORKSPACE_PATH"] = configuration.workspacePath
         proc.environment = environment
@@ -135,7 +143,7 @@ actor MCPServer {
 
     func waitForReady(port: Int, timeout: TimeInterval = 30) async -> Bool {
         let deadline = Date().addingTimeInterval(timeout)
-        let url = URL(string: "http://127.0.0.1:\(port)/healthz")!
+        let url = URL(string: "\(Self.defaultTransport)://\(Self.defaultHost):\(port)\(Self.defaultHealthPath)")!
 
         while !Task.isCancelled && Date() < deadline {
             do {

@@ -108,7 +108,7 @@ private struct ASRPreferencesTab: View {
                 // Hotwords section
                 GroupBox("Hotwords") {
                     VStack(alignment: .leading, spacing: 8) {
-                        Text("Words to boost in recognition accuracy:")
+                        Text("Words to boost in recognition accuracy. Changes apply to the running ASR service automatically.")
                             .font(.caption)
                             .foregroundColor(.secondary)
 

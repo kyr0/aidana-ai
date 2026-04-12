@@ -31,6 +31,19 @@ actor AIServer {
         wakeWordProvider = provider
     }
 
+    func setASRRuntimeConfiguration(_ configuration: ASRRuntimeConfiguration) async throws -> Bool {
+        try await modelManager.setASRRuntimeConfiguration(configuration)
+    }
+
+    private struct ASRConfigResponse: Codable {
+        let language: String
+        let wakeWord: String
+        let hotwords: [String]
+        let effectiveHotwords: [String]
+        let hotwordBoostingEnabled: Bool
+        let sampleRate: Int
+    }
+
     private struct TTSConfigResponse: Codable {
         let port: Int
         let model: String
@@ -43,6 +56,17 @@ actor AIServer {
         let sampleRate: Int
         let channels: Int
         let bitsPerSample: Int
+    }
+
+    private struct MCPConfigResponse: Codable {
+        let transport: String
+        let host: String
+        let port: Int
+        let path: String
+        let healthPath: String
+        let workspacePath: String
+        let autoStart: Bool
+        let workQueuePort: Int
     }
 
     private static func defaultTTSReferenceAudioPath() -> String {
@@ -78,6 +102,60 @@ actor AIServer {
             channels: 1,
             bitsPerSample: 16,
         )
+    }
+
+    private static func currentASRConfig() -> ASRConfigResponse {
+        let defaults = UserDefaults.standard
+        let runtimeConfiguration = ASRRuntimeConfiguration(
+            wakeWord: defaults.string(forKey: "preferences.wakeWord") ?? "",
+            hotwords: defaults.stringArray(forKey: "preferences.hotwords") ?? []
+        )
+
+        return ASRConfigResponse(
+            language: defaults.string(forKey: "preferences.asrLanguage") ?? "auto",
+            wakeWord: runtimeConfiguration.wakeWord,
+            hotwords: runtimeConfiguration.hotwords,
+            effectiveHotwords: runtimeConfiguration.effectiveHotwords,
+            hotwordBoostingEnabled: runtimeConfiguration.hotwordBoostingEnabled,
+            sampleRate: Int(ASRWebSocketHandler.sampleRate)
+        )
+    }
+
+    private static func currentMCPConfig() -> MCPConfigResponse {
+        let defaults = UserDefaults.standard
+        let storedPort = defaults.integer(forKey: "preferences.mcpPort")
+        let storedWorkspacePath = defaults.string(forKey: "preferences.mcpWorkspacePath")?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+
+        return MCPConfigResponse(
+            transport: MCPServer.defaultTransport,
+            host: MCPServer.defaultHost,
+            port: storedPort == 0 ? 3211 : storedPort,
+            path: MCPServer.defaultPath,
+            healthPath: MCPServer.defaultHealthPath,
+            workspacePath: storedWorkspacePath.isEmpty
+                ? PreferencesStore.defaultMCPWorkspacePath
+                : storedWorkspacePath,
+            autoStart: defaults.object(forKey: "preferences.mcpAutoStart") as? Bool ?? true,
+            workQueuePort: MCPServer.defaultWorkQueuePort
+        )
+    }
+
+    private static func jsonResponse<T: Encodable>(_ value: T) -> Response {
+        do {
+            let encoded = try JSONEncoder().encode(value)
+            guard let body = String(data: encoded, encoding: .utf8) else {
+                return Response(status: .internalServerError)
+            }
+
+            return Response(
+                status: .ok,
+                headers: [.contentType: "application/json"],
+                body: .init(byteBuffer: ByteBuffer(string: body))
+            )
+        } catch {
+            return Response(status: .internalServerError)
+        }
     }
 
     func start(port: Int) async throws {
@@ -120,18 +198,16 @@ actor AIServer {
             )
         }
 
-        router.get("/tts/config") { _, _ -> Response in
-            let config = Self.currentTTSConfig()
-            let encoded = try JSONEncoder().encode(config)
-            guard let body = String(data: encoded, encoding: .utf8) else {
-                return Response(status: .internalServerError)
-            }
+        router.get("/asr/config") { _, _ -> Response in
+            Self.jsonResponse(Self.currentASRConfig())
+        }
 
-            return Response(
-                status: .ok,
-                headers: [.contentType: "application/json"],
-                body: .init(byteBuffer: ByteBuffer(string: body))
-            )
+        router.get("/tts/config") { _, _ -> Response in
+            Self.jsonResponse(Self.currentTTSConfig())
+        }
+
+        router.get("/mcp/config") { _, _ -> Response in
+            Self.jsonResponse(Self.currentMCPConfig())
         }
 
         // WebSocket router
