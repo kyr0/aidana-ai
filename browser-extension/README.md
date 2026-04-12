@@ -33,3 +33,9 @@ This command will compile a new version of this extension that you can load in C
 Do not run `bun run mcp` at the same time as `bun run test:file-search`, because both flows would try to own the same HTTP work-queue server on port `3210`.
 
 The same restriction applies to `bun run test:doctor-search`.
+
+### Test Embedded Build
+
+```bash
+AIDANA_MCP_TRANSPORT=http AIDANA_MCP_PORT=33221 AIDANA_WORK_QUEUE_PORT=33220 AIDANA_WORKSPACE_PATH='/Users/admin/Code/Aidana/Starling-main' '/Users/admin/Library/Developer/Xcode/DerivedData/Aidana-efeahdjexitpdpcslbkfmyraodqt/Build/Products/Debug/Aidana.app/Contents/Resources/EmbeddedMCP/runtime/bin/node' '/Users/admin/Library/Developer/Xcode/DerivedData/Aidana-efeahdjexitpdpcslbkfmyraodqt/Build/Products/Debug/Aidana.app/Contents/Resources/EmbeddedMCP/mcp-server.cjs'
+```

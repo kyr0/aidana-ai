@@ -29,3 +29,7 @@ class LogStore: ObservableObject {
 /// Separate log store type for TTS so SwiftUI can distinguish via @EnvironmentObject.
 @MainActor
 final class TTSLogStore: LogStore {}
+
+/// Separate log store type for MCP so SwiftUI can distinguish via @EnvironmentObject.
+@MainActor
+final class MCPLogStore: LogStore {}

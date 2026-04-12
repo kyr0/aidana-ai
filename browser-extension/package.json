@@ -5,6 +5,7 @@
   "scripts": {
     "prebuild": "rm -rf ./dist && rm -rf ./node_modules/.bun",
     "build": "vite build",
+    "build:embedded-mcp": "bun ./scripts/build-embedded-mcp.mjs",
     "test:browser-automation": "tsx example-browser-automation.ts",
     "test:file-search": "tsx example-mcp-file-search.ts",
     "test:doctor-search": "tsx example-mcp-doctor-search.ts",

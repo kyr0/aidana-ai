@@ -13,6 +13,7 @@ final class StatusBarController {
     private let menu = NSMenu()
     private let asrInfoItem = NSMenuItem(title: "ASR: Stopped", action: nil, keyEquivalent: "")
     private let ttsInfoItem = NSMenuItem(title: "TTS: Stopped", action: nil, keyEquivalent: "")
+    private let mcpInfoItem = NSMenuItem(title: "MCP: Stopped", action: nil, keyEquivalent: "")
     private let logItem = NSMenuItem(title: "Log…", action: #selector(handleLogRequest), keyEquivalent: "l")
     private let preferencesItem = NSMenuItem(title: "Preferences…", action: #selector(handlePreferencesRequest), keyEquivalent: ",")
     private let quitItem = NSMenuItem(title: "Quit Aidana", action: #selector(handleQuit), keyEquivalent: "q")
@@ -43,10 +44,12 @@ final class StatusBarController {
         quitItem.target = self
         asrInfoItem.isEnabled = false
         ttsInfoItem.isEnabled = false
+        mcpInfoItem.isEnabled = false
 
         menu.items = [
             asrInfoItem,
             ttsInfoItem,
+            mcpInfoItem,
             NSMenuItem.separator(),
             logItem,
             preferencesItem,
@@ -77,6 +80,13 @@ final class StatusBarController {
             .receive(on: RunLoop.main)
             .sink { [weak self] status in
                 self?.ttsInfoItem.title = "TTS: \(status.displayText)"
+            }
+            .store(in: &cancellables)
+
+        serverState.$mcpStatus
+            .receive(on: RunLoop.main)
+            .sink { [weak self] status in
+                self?.mcpInfoItem.title = "MCP: \(status.displayText)"
             }
             .store(in: &cancellables)
     }

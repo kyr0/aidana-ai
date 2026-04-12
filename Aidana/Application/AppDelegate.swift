@@ -14,9 +14,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private let serverState = ServerState()
     private let logStore = LogStore()
     private let ttsLogStore = TTSLogStore()
+    private let mcpLogStore = MCPLogStore()
     private lazy var testClient = ASRTestClient(logStore: logStore)
     private let aiServer = AIServer()
     private let ttsServer = TTSServer()
+    private let mcpServer = MCPServer()
     private lazy var statusBarController = StatusBarController(
         serverState: serverState,
         preferences: preferences
@@ -40,6 +42,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     func applicationWillTerminate(_ notification: Notification) {
         logStore.append("Shutting down…")
         serverLifecycleTask?.cancel()
+        MCPServer.killStaleProcesses()
         // Kill TTS synchronously — can't await in willTerminate
         TTSServer.killStaleProcesses()
         Task {
@@ -54,6 +57,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
         let logRef = logStore
         let ttsLogRef = ttsLogStore
+        let mcpLogRef = mcpLogStore
         let stateRef = serverState
 
         serverLifecycleTask = Task { [weak self] in
@@ -87,6 +91,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                     }
                 }
             }
+            await self.mcpServer.setLogCallback { message in
+                Task { @MainActor in
+                    mcpLogRef.append(message)
+                }
+            }
+            await self.mcpServer.setLifecycleCallback { event in
+                Task { @MainActor in
+                    switch event {
+                    case .stopped(let expected, let exitCode):
+                        if expected {
+                            stateRef.setMCPStatus(.stopped)
+                            mcpLogRef.append("MCP server stopped")
+                        } else {
+                            stateRef.setMCPStatus(.error("exited (\(exitCode))"))
+                            mcpLogRef.append("MCP server exited unexpectedly (\(exitCode))")
+                        }
+                    }
+                }
+            }
+
+            async let mcpStartup: Void = self.startMCPServerIfNeeded()
 
             // Set TTS to starting immediately
             await MainActor.run {
@@ -155,6 +180,61 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
             // Start TTS sidecar
             await self.startTTSServer()
+            await mcpStartup
+        }
+    }
+
+    private func startMCPServerIfNeeded() async {
+        let autoStart = await MainActor.run { preferences.mcpAutoStart }
+        guard autoStart else {
+            await MainActor.run {
+                serverState.setMCPStatus(.stopped)
+                mcpLogStore.append("MCP auto-start disabled")
+            }
+            return
+        }
+
+        let port = await MainActor.run { preferences.mcpPort }
+        let workspacePath = await MainActor.run { preferences.mcpWorkspacePath.trimmingCharacters(in: .whitespacesAndNewlines) }
+        let effectiveWorkspacePath = workspacePath.isEmpty
+            ? FileManager.default.homeDirectoryForCurrentUser.path
+            : workspacePath
+
+        await MainActor.run {
+            serverState.setMCPStatus(.starting)
+            mcpLogStore.append("Starting MCP server on port \(port)…")
+        }
+
+        do {
+            try await mcpServer.start(
+                configuration: .init(
+                    mcpPort: port,
+                    workQueuePort: 3210,
+                    workspacePath: effectiveWorkspacePath
+                )
+            )
+        } catch {
+            logger.error("MCP server start failed: \(error)")
+            await MainActor.run {
+                serverState.setMCPStatus(.error(error.localizedDescription))
+                mcpLogStore.append("MCP server error: \(error.localizedDescription)")
+            }
+            return
+        }
+
+        let ready = await mcpServer.waitForReady(port: port, timeout: 30)
+        guard ready else {
+            logger.error("MCP server did not become ready within timeout")
+            await MainActor.run {
+                serverState.setMCPStatus(.error("timeout"))
+                mcpLogStore.append("MCP server timeout — not responding")
+            }
+            return
+        }
+
+        await MainActor.run {
+            serverState.setMCPStatus(.ready(port: port))
+            mcpLogStore.append("MCP server ready on port \(port)")
         }
     }
 
@@ -259,6 +339,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         serverLifecycleTask?.cancel()
         serverLifecycleTask = nil
         Task {
+            await mcpServer.stop()
             await ttsServer.stop()
             await aiServer.stop()
         }
@@ -266,8 +347,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         serverState.setASRModelReady(false)
         serverState.setTTSReady(false)
         serverState.setTTSStatus(.stopped)
+        serverState.setMCPStatus(.stopped)
         logStore.append("Server stopped")
         ttsLogStore.append("TTS server stopped")
+        mcpLogStore.append("MCP server stopped")
     }
 
     private func currentTTSWarmupConfig(modelName: String) -> TTSServer.WarmupConfig {
@@ -359,6 +442,7 @@ extension AppDelegate {
             rootView: LogView()
                 .environmentObject(logStore)
                 .environmentObject(ttsLogStore)
+                .environmentObject(mcpLogStore)
                 .environmentObject(serverState)
                 .environmentObject(testClient)
         )

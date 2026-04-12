@@ -1,9 +1,9 @@
-import { readFile, writeFile, unlink, access, readdir } from "node:fs/promises";
-import { resolve, normalize } from "node:path";
-import config from "../../config.js";
+import { access, readdir, readFile, unlink, writeFile } from "node:fs/promises";
+import { normalize, resolve, sep } from "node:path";
+import { runtimeConfig } from "./runtime-config.js";
 
 /** Mutable workspace root — can be updated at runtime via setWorkspacePath */
-let workspacePath = config.workspacePath;
+let workspacePath = runtimeConfig.workspacePath;
 
 export function getWorkspacePath(): string {
   return workspacePath;
@@ -18,8 +18,13 @@ export function setWorkspacePath(newPath: string): void {
 function safePath(relativePath: string): string {
   const root = workspacePath;
   const resolved = resolve(root, relativePath);
-  const normalizedRoot = normalize(root);
-  if (!resolved.startsWith(normalizedRoot)) {
+  const normalizedRoot = normalize(resolve(root));
+  const normalizedResolved = normalize(resolved);
+
+  if (
+    normalizedResolved !== normalizedRoot &&
+    !normalizedResolved.startsWith(`${normalizedRoot}${sep}`)
+  ) {
     throw new Error(`Path traversal denied: ${relativePath}`);
   }
   return resolved;

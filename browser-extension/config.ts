@@ -42,10 +42,18 @@ export interface Config {
   syntheticEvents: SyntheticEventsConfig;
 }
 
+function defaultWorkspacePath(): string {
+  if (typeof process !== "undefined" && typeof process.cwd === "function") {
+    return `${process.cwd()}/workspace`;
+  }
+
+  return "/workspace";
+}
+
 export default {
   serverEndpoint: "http://localhost:3210",
   serverTaskPollingIntervalMs: 100,
-  workspacePath: new URL("./workspace", import.meta.url).pathname,
+  workspacePath: defaultWorkspacePath(),
   retry: {
     retry: true,
     maxRetries: 3,

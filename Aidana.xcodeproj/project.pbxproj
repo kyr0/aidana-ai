@@ -16,6 +16,7 @@
 		A1D90C552ABD08B4008F00A1 /* PreferencesView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1D90C542ABD08B4008F00A1 /* PreferencesView.swift */; };
 		AAE0D7C72EA3210000010013 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = AAE0D7C62EA3210000010012 /* AppDelegate.swift */; };
 		AA0000010000000000200001 /* AIServer.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000010000000000100001 /* AIServer.swift */; };			AA000001000000000020000A /* TTSServer.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA000001000000000010000A /* TTSServer.swift */; };		AA0000010000000000200002 /* ASRWebSocketHandler.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000010000000000100002 /* ASRWebSocketHandler.swift */; };
+		AA000001000000000020000B /* MCPServer.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA000001000000000010000B /* MCPServer.swift */; };
 		AA0000010000000000200004 /* ModelManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000010000000000100004 /* ModelManager.swift */; };
 		AA0000010000000000200005 /* ServerState.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000010000000000100005 /* ServerState.swift */; };
 		AA0000010000000000200006 /* LogStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000010000000000100006 /* LogStore.swift */; };
@@ -37,6 +38,7 @@
 		A1D90C542ABD08B4008F00A1 /* PreferencesView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PreferencesView.swift; sourceTree = "<group>"; };
 		AAE0D7C62EA3210000010012 /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
 		AA0000010000000000100001 /* AIServer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIServer.swift; sourceTree = "<group>"; };			AA000001000000000010000A /* TTSServer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TTSServer.swift; sourceTree = "<group>"; };		AA0000010000000000100002 /* ASRWebSocketHandler.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ASRWebSocketHandler.swift; sourceTree = "<group>"; };
+		AA000001000000000010000B /* MCPServer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MCPServer.swift; sourceTree = "<group>"; };
 		AA0000010000000000100004 /* ModelManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModelManager.swift; sourceTree = "<group>"; };
 		AA0000010000000000100005 /* ServerState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServerState.swift; sourceTree = "<group>"; };
 		AA0000010000000000100006 /* LogStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LogStore.swift; sourceTree = "<group>"; };
@@ -57,6 +59,28 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		AA0000010000000000700001 /* Stage Embedded MCP */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Stage Embedded MCP";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "sh \"$SRCROOT/scripts/stage-embedded-mcp.sh\"";
+		};
+/* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXGroup section */
 		8BF338AF2E9AC61100FF9F32 = {
@@ -113,6 +137,7 @@
 			children = (
 				AA0000010000000000100001 /* AIServer.swift */,
 				AA0000010000000000100002 /* ASRWebSocketHandler.swift */,
+				AA000001000000000010000B /* MCPServer.swift */,
 				AA0000010000000000100004 /* ModelManager.swift */,
 				AA0000010000000000100005 /* ServerState.swift */,
 				AA000001000000000010000A /* TTSServer.swift */,
@@ -173,6 +198,7 @@
 				8BF338B42E9AC61100FF9F32 /* Sources */,
 				8BF338B52E9AC61100FF9F32 /* Frameworks */,
 				8BF338B62E9AC61100FF9F32 /* Resources */,
+				AA0000010000000000700001 /* Stage Embedded MCP */,
 			);
 			buildRules = (
 			);
@@ -252,6 +278,7 @@
 				AA0000010000000000200001 /* AIServer.swift in Sources */,
 				AA0000010000000000200002 /* ASRWebSocketHandler.swift in Sources */,
 				AA0000010000000000200004 /* ModelManager.swift in Sources */,
+				AA000001000000000020000B /* MCPServer.swift in Sources */,
 				AA0000010000000000200005 /* ServerState.swift in Sources */,
 				AA0000010000000000200006 /* LogStore.swift in Sources */,
 				AA0000010000000000200007 /* LogView.swift in Sources */,
@@ -301,7 +328,7 @@
 				DEBUG_INFORMATION_FORMAT = dwarf;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
 				ENABLE_TESTABILITY = YES;
-				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				GCC_C_LANGUAGE_STANDARD = gnu17;
 				GCC_DYNAMIC_NO_PIC = NO;
 				GCC_NO_COMMON_BLOCKS = YES;
@@ -365,7 +392,7 @@
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
 				ENABLE_NS_ASSERTIONS = NO;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
-				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				GCC_C_LANGUAGE_STANDARD = gnu17;
 				GCC_NO_COMMON_BLOCKS = YES;
 				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;

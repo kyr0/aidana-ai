@@ -86,10 +86,27 @@ final class ServerState: ObservableObject {
         }
     }
 
+    enum MCPStatus: Equatable {
+        case stopped
+        case starting
+        case ready(port: Int)
+        case error(String)
+
+        var displayText: String {
+            switch self {
+            case .stopped: return "Stopped"
+            case .starting: return "Starting…"
+            case .ready(let port): return "Running on \(port)"
+            case .error(let message): return "Error: \(message)"
+            }
+        }
+    }
+
     @Published private(set) var status: Status = .stopped
     @Published private(set) var asrModelReady = false
     @Published private(set) var ttsReady = false
     @Published private(set) var ttsStatus: TTSStatus = .stopped
+    @Published private(set) var mcpStatus: MCPStatus = .stopped
     @Published private(set) var connectedASRClients = 0
     @Published private(set) var listeningMode: ListeningMode = .idle
 
@@ -108,6 +125,10 @@ final class ServerState: ObservableObject {
 
     func setTTSStatus(_ newStatus: TTSStatus) {
         ttsStatus = newStatus
+    }
+
+    func setMCPStatus(_ newStatus: MCPStatus) {
+        mcpStatus = newStatus
     }
 
     func setConnectedASRClients(_ count: Int) {

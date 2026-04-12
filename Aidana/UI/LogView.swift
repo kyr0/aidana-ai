@@ -9,6 +9,7 @@ import SwiftUI
 struct LogView: View {
     @EnvironmentObject private var asrLogStore: LogStore
     @EnvironmentObject private var ttsLogStore: TTSLogStore
+    @EnvironmentObject private var mcpLogStore: MCPLogStore
     @EnvironmentObject private var serverState: ServerState
     @EnvironmentObject private var testClient: ASRTestClient
 
@@ -23,6 +24,10 @@ struct LogView: View {
             TTSLogTab()
                 .environmentObject(ttsLogStore)
                 .tabItem { Label("TTS", systemImage: "speaker.wave.2") }
+
+            MCPLogTab()
+                .environmentObject(mcpLogStore)
+                .tabItem { Label("MCP", systemImage: "server.rack") }
         }
         .frame(width: 520, height: 360)
     }
@@ -92,6 +97,40 @@ private struct ASRLogTab: View {
 
 private struct TTSLogTab: View {
     @EnvironmentObject private var logStore: TTSLogStore
+
+    var body: some View {
+        VStack(spacing: 0) {
+            LogPanelView(entries: logStore.entries)
+
+            Divider()
+
+            HStack {
+                Text("\(logStore.entries.count) entries")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                Spacer()
+                Button("Copy") {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(logText(logStore.entries), forType: .string)
+                }
+                .buttonStyle(.borderless)
+                .font(.caption)
+                Button("Clear") {
+                    logStore.clear()
+                }
+                .buttonStyle(.borderless)
+                .font(.caption)
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+        }
+    }
+}
+
+// MARK: - MCP Log Tab
+
+private struct MCPLogTab: View {
+    @EnvironmentObject private var logStore: MCPLogStore
 
     var body: some View {
         VStack(spacing: 0) {

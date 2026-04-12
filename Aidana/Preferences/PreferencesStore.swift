@@ -66,6 +66,18 @@ final class PreferencesStore: ObservableObject {
         didSet { defaults.set(ttsStreamingInterval, forKey: Keys.ttsStreamingInterval) }
     }
 
+    @Published var mcpAutoStart: Bool {
+        didSet { defaults.set(mcpAutoStart, forKey: Keys.mcpAutoStart) }
+    }
+
+    @Published var mcpPort: Int {
+        didSet { defaults.set(mcpPort, forKey: Keys.mcpPort) }
+    }
+
+    @Published var mcpWorkspacePath: String {
+        didSet { defaults.set(mcpWorkspacePath, forKey: Keys.mcpWorkspacePath) }
+    }
+
     private let defaults: UserDefaults
 
     private init(defaults: UserDefaults = .standard) {
@@ -85,6 +97,9 @@ final class PreferencesStore: ObservableObject {
             Keys.ttsSpeed: 3.0,
             Keys.ttsGender: "male",
             Keys.ttsStreamingInterval: 0.25,
+            Keys.mcpAutoStart: true,
+            Keys.mcpPort: 3211,
+            Keys.mcpWorkspacePath: FileManager.default.homeDirectoryForCurrentUser.path,
         ])
 
         let port = defaults.integer(forKey: Keys.serverPort)
@@ -106,6 +121,10 @@ final class PreferencesStore: ObservableObject {
         ttsGender = defaults.string(forKey: Keys.ttsGender) ?? "male"
         let streamingInterval = defaults.double(forKey: Keys.ttsStreamingInterval)
         ttsStreamingInterval = streamingInterval == 0 ? 0.25 : streamingInterval
+        mcpAutoStart = defaults.bool(forKey: Keys.mcpAutoStart)
+        let storedMcpPort = defaults.integer(forKey: Keys.mcpPort)
+        mcpPort = storedMcpPort == 0 ? 3211 : storedMcpPort
+        mcpWorkspacePath = defaults.string(forKey: Keys.mcpWorkspacePath) ?? FileManager.default.homeDirectoryForCurrentUser.path
     }
 
     /// All hotwords including the wake word (if non-empty).
@@ -132,5 +151,8 @@ final class PreferencesStore: ObservableObject {
         static let ttsSpeed = "preferences.ttsSpeed"
         static let ttsGender = "preferences.ttsGender"
         static let ttsStreamingInterval = "preferences.ttsStreamingInterval"
+        static let mcpAutoStart = "preferences.mcpAutoStart"
+        static let mcpPort = "preferences.mcpPort"
+        static let mcpWorkspacePath = "preferences.mcpWorkspacePath"
     }
 }

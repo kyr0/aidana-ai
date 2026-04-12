@@ -26,6 +26,9 @@ struct PreferencesView: View {
 
             TTSPreferencesTab(preferences: preferences, serverState: serverState)
                 .tabItem { Label("TTS", systemImage: "speaker.wave.2") }
+
+            MCPPreferencesTab(preferences: preferences, serverState: serverState)
+                .tabItem { Label("MCP", systemImage: "server.rack") }
         }
         .frame(width: 460, height: 560)
     }
@@ -357,6 +360,99 @@ private struct TTSPreferencesTab: View {
     private var ttsModelCacheDir: URL {
         let home = FileManager.default.homeDirectoryForCurrentUser
         return home.appendingPathComponent(".cache/huggingface/hub")
+    }
+}
+
+// MARK: - MCP Tab
+
+private struct MCPPreferencesTab: View {
+    @ObservedObject var preferences: PreferencesStore
+    @ObservedObject var serverState: ServerState
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 20) {
+                GroupBox("Status") {
+                    HStack {
+                        Circle()
+                            .fill(mcpStatusColor)
+                            .frame(width: 8, height: 8)
+                        Text(serverState.mcpStatus.displayText)
+                            .font(.system(.body, design: .monospaced))
+                    }
+                    .padding(8)
+                }
+
+                GroupBox("Server") {
+                    VStack(alignment: .leading, spacing: 12) {
+                        Toggle("Start MCP automatically on launch", isOn: $preferences.mcpAutoStart)
+
+                        HStack {
+                            Text("MCP Port")
+                                .frame(width: 100, alignment: .leading)
+                            TextField(
+                                "3211",
+                                value: $preferences.mcpPort,
+                                formatter: NumberFormatter.integerOnly
+                            )
+                            .textFieldStyle(.roundedBorder)
+                            .frame(width: 100)
+                        }
+
+                        HStack(alignment: .top) {
+                            Text("Work Queue")
+                                .frame(width: 100, alignment: .leading)
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text("3210")
+                                    .font(.system(.body, design: .monospaced))
+                                Text("The browser extension currently polls the local work-queue on a fixed port.")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+                        }
+                    }
+                    .padding(8)
+                }
+
+                GroupBox("Workspace") {
+                    VStack(alignment: .leading, spacing: 12) {
+                        HStack(alignment: .top) {
+                            Text("Root")
+                                .frame(width: 100, alignment: .leading)
+                            TextField("Workspace root", text: $preferences.mcpWorkspacePath)
+                                .textFieldStyle(.roundedBorder)
+                            Button("Browse…") {
+                                let panel = NSOpenPanel()
+                                panel.canChooseFiles = false
+                                panel.canChooseDirectories = true
+                                panel.canCreateDirectories = true
+                                panel.allowsMultipleSelection = false
+                                if panel.runModal() == .OK, let url = panel.url {
+                                    preferences.mcpWorkspacePath = url.path
+                                }
+                            }
+                        }
+
+                        Text("Used as the root directory for file-based MCP tools when Aidana hosts the server.")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                    .padding(8)
+                }
+
+                Spacer()
+            }
+            .padding(24)
+        }
+    }
+
+    private var mcpStatusColor: Color {
+        switch serverState.mcpStatus {
+        case .ready: return .green
+        case .stopped: return .gray
+        case .starting: return .orange
+        case .error: return .red
+        }
     }
 }
 
