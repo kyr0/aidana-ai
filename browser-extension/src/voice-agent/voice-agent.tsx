@@ -63,23 +63,36 @@ const VOICE_DETECTOR_TUNING: VoiceDetectorOptions = Object.freeze({
 });
 
 const HEALTH_URL = "http://localhost:31337/health";
+const STATUS_URL = "http://localhost:31337/status";
 const ASR_URL = "ws://localhost:31337/asr";
 const ASR_CONFIG_URL = "http://localhost:31337/asr/config";
 const TTS_CONFIG_URL = "http://localhost:31337/tts/config";
 const DEFAULT_TTS_PORT = 31338;
+const TTS_SPEED_OPTIONS = [3, 4, 5] as const;
 const DEFAULT_TTS_SPEED = 3;
 const DEFAULT_TTS_STREAMING_INTERVAL = 0.25;
-const MIN_TTS_SPEED = 0.25;
-const MAX_TTS_SPEED = 6;
+const MIN_TTS_SPEED = TTS_SPEED_OPTIONS[0];
+const MAX_TTS_SPEED = TTS_SPEED_OPTIONS[TTS_SPEED_OPTIONS.length - 1];
 const MIN_TTS_STREAMING_INTERVAL = 0.05;
 const MAX_TTS_STREAMING_INTERVAL = 4;
 const TTS_STREAM_START_BUFFER_SECONDS = 0.18;
 const TTS_STREAM_START_LEAD_SECONDS = 0.06;
 const TTS_STREAM_PACKET_DEBUG_INTERVAL = 10;
 const THINKING_ANIMATION_URL = chrome.runtime.getURL("animations/thinking.fbx");
+const SPEECH_RATE_WORKLET_URL = chrome.runtime.getURL("worklets/speech-rate-worklet.js");
+const SPEECH_RATE_ANALYZER_ENABLED = false;
 const THINKING_ANIMATION_DURATION_SECONDS = 2;
 const THINKING_ANIMATION_DURATION_MS = THINKING_ANIMATION_DURATION_SECONDS * 1000;
+const AUTO_THINKING_ANIMATION_DURATION_SECONDS = 30;
+const AUTO_THINKING_ANIMATION_DURATION_MS =
+    AUTO_THINKING_ANIMATION_DURATION_SECONDS * 1000;
 const AVATAR_ANIMATION_IDLE_STATUS = "Idle loop";
+const SPEECH_RATE_MIN_PEAK_GAP_SEC = 0.1;
+const SPEECH_RATE_SYLLABLES_PER_WORD = 1.5;
+const SPEECH_RATE_SLOW_THRESHOLD_SPS = 3;
+const SPEECH_RATE_FAST_THRESHOLD_SPS = 5;
+const LOCAL_RUNTIME_TIMEOUT_MS = 1000;
+const RUNTIME_STATUS_POLL_INTERVAL_MS = 1000;
 
 const DEVICE_PREF_KEY = "__aidana_voice_agent_input_device";
 const MIC_PERMISSION_PREF_KEY = "__aidana_voice_agent_mic_permission";
@@ -193,6 +206,7 @@ type OverlayMessage = {
 
 type AsrLanguageId = (typeof ASR_LANGUAGES)[number]["id"];
 type VoiceSpaceId = (typeof VOICE_SPACES)[number]["id"];
+type DiscreteTtsSpeed = (typeof TTS_SPEED_OPTIONS)[number];
 
 type ASRConfig = {
     language: string;
@@ -209,7 +223,7 @@ type TTSConfig = {
     refAudioPath: string;
     refText: string;
     langCode: string;
-    speed: number;
+    speed: DiscreteTtsSpeed;
     gender: string;
     streamingInterval: number;
     sampleRate: number;
@@ -218,7 +232,7 @@ type TTSConfig = {
 };
 
 type TTSRequestSettings = {
-    speed: number;
+    speed: DiscreteTtsSpeed;
     streamingInterval: number;
 };
 
@@ -226,7 +240,7 @@ type TTSQueueItem = {
     id: string;
     text: string;
     createdAt: number;
-    speed: number;
+    speed: DiscreteTtsSpeed;
     streamingInterval: number;
 };
 
@@ -235,6 +249,45 @@ type VoiceDetectionResult = {
     rms: number;
     onVoiceStart?: boolean;
     onVoiceEnd?: boolean;
+};
+
+type SpeechRateUtteranceSummary = {
+    type: "utterance-summary";
+    sessionId: number;
+    utteranceId: number;
+    totalSyllables: number;
+    totalVoicedSec: number;
+    totalSec: number;
+    speechRateSps: number;
+    estWpm: number;
+    voicedRatio: number;
+    minPeakGapSec: number;
+    syllablesPerWord: number;
+    noiseDb: number;
+};
+
+type SpeechRateWorkletWarning = {
+    type: "warning";
+    sessionId?: number;
+    utteranceId?: number;
+    message: string;
+};
+
+type AidanaRuntimeServiceStatus = {
+    state: string;
+    displayText: string;
+    ready: boolean;
+    healthy: boolean;
+    port?: number | null;
+    autoStart?: boolean | null;
+};
+
+type AidanaRuntimeStatus = {
+    status: string;
+    all_healthy: boolean;
+    asr: AidanaRuntimeServiceStatus;
+    tts: AidanaRuntimeServiceStatus;
+    mcp: AidanaRuntimeServiceStatus;
 };
 
 type AvatarAnimationMode = "idle" | "manual" | "auto";
@@ -248,7 +301,7 @@ type AgentState = {
     selectedDeviceId: string | null;
     selectedAsrLanguage: AsrLanguageId;
     asrLanguageDirty: boolean;
-    selectedTtsSpeed: number;
+    selectedTtsSpeed: DiscreteTtsSpeed;
     ttsSpeedDirty: boolean;
     selectedTtsStreamingInterval: number;
     ttsStreamingIntervalDirty: boolean;
@@ -258,6 +311,10 @@ type AgentState = {
     preparingSession: boolean;
     micStream: MediaStream | null;
     audioCtx: AudioContext | null;
+    speechRateNode: AudioWorkletNode | null;
+    speechRateSessionId: number;
+    speechRateNextUtteranceId: number;
+    speechRateActiveUtteranceId: number | null;
     source: MediaStreamAudioSourceNode | null;
     processor: ScriptProcessorNode | null;
     muteNode: GainNode | null;
@@ -271,6 +328,9 @@ type AgentState = {
     utteranceActive: boolean;
     awaitingFinal: boolean;
     hangoverFramesRemaining: number;
+    runtimeStatus: AidanaRuntimeStatus | null;
+    runtimeWaitVisible: boolean;
+    runtimeWaitToken: number;
     asrHealthy: boolean | null;
     confirmedTranscript: string;
     volatileTranscript: string;
@@ -326,6 +386,10 @@ const state: AgentState = {
     preparingSession: false,
     micStream: null,
     audioCtx: null,
+    speechRateNode: null,
+    speechRateSessionId: 0,
+    speechRateNextUtteranceId: 1,
+    speechRateActiveUtteranceId: null,
     source: null,
     processor: null,
     muteNode: null,
@@ -339,6 +403,9 @@ const state: AgentState = {
     utteranceActive: false,
     awaitingFinal: false,
     hangoverFramesRemaining: 0,
+    runtimeStatus: null,
+    runtimeWaitVisible: false,
+    runtimeWaitToken: 0,
     asrHealthy: null,
     confirmedTranscript: "",
     volatileTranscript: "",
@@ -385,6 +452,8 @@ let asrConfigPromise: Promise<ASRConfig> | null = null;
 let ttsConfigPromise: Promise<TTSConfig> | null = null;
 let ttsAnalyserSamples: Uint8Array<ArrayBuffer> | null = null;
 let avatarAnimationTimer: ReturnType<typeof setTimeout> | null = null;
+let avatarAnimationPlaybackMode: AvatarAnimationMode = "idle";
+let avatarAnimationRunToken = 0;
 const voiceSpaceBytesCache = new Map<VoiceSpaceId, ArrayBuffer>();
 const voiceSpaceBytesPromises = new Map<VoiceSpaceId, Promise<ArrayBuffer>>();
 let ttsVoiceSpaceApplyToken = 0;
@@ -396,6 +465,33 @@ function clearAvatarAnimationTimer() {
 
     clearTimeout(avatarAnimationTimer);
     avatarAnimationTimer = null;
+}
+
+function avatarAnimationDurationSeconds(mode: AvatarAnimationMode) {
+    return mode === "auto"
+        ? AUTO_THINKING_ANIMATION_DURATION_SECONDS
+        : THINKING_ANIMATION_DURATION_SECONDS;
+}
+
+function avatarAnimationDurationMs(mode: AvatarAnimationMode) {
+    return mode === "auto"
+        ? AUTO_THINKING_ANIMATION_DURATION_MS
+        : THINKING_ANIMATION_DURATION_MS;
+}
+
+function stopAvatarAnimationPlayback() {
+    clearAvatarAnimationTimer();
+    avatarAnimationRunToken += 1;
+
+    if (avatarAnimationPlaybackMode === "idle") {
+        return;
+    }
+
+    avatarAnimationPlaybackMode = "idle";
+
+    try {
+        state.head?.stopAnimation?.();
+    } catch { }
 }
 
 function setAvatarAnimationState(
@@ -422,7 +518,7 @@ function setAvatarAnimationState(
 }
 
 function resetAvatarAnimationState(rerender = true) {
-    clearAvatarAnimationTimer();
+    stopAvatarAnimationPlayback();
     setAvatarAnimationState("idle", AVATAR_ANIMATION_IDLE_STATUS, rerender);
 }
 
@@ -448,24 +544,43 @@ function scheduleAvatarThinkingCycle(mode: AvatarAnimationMode, status: string) 
         return;
     }
 
-    clearAvatarAnimationTimer();
+    const shouldRestartPlayback =
+        mode === "manual" || avatarAnimationPlaybackMode !== mode;
+
     setAvatarAnimationState(mode, status);
+
+    if (!shouldRestartPlayback) {
+        return;
+    }
+
+    const runToken = avatarAnimationRunToken + 1;
+    stopAvatarAnimationPlayback();
+    avatarAnimationRunToken = runToken;
+    avatarAnimationPlaybackMode = mode;
 
     try {
         const animationResult = state.head.playAnimation(
             THINKING_ANIMATION_URL,
             null,
-            THINKING_ANIMATION_DURATION_SECONDS,
+            avatarAnimationDurationSeconds(mode),
         );
 
         if (animationResult && typeof animationResult.catch === "function") {
             void animationResult.catch((error: unknown) => {
+                if (runToken !== avatarAnimationRunToken) {
+                    return;
+                }
+
                 const message = error instanceof Error ? error.message : String(error);
                 appendLog(`Thinking animation failed: ${message}`);
                 resetAvatarAnimationState();
             });
         }
     } catch (error) {
+        if (runToken !== avatarAnimationRunToken) {
+            return;
+        }
+
         const message = error instanceof Error ? error.message : String(error);
         appendLog(`Thinking animation failed: ${message}`);
         resetAvatarAnimationState();
@@ -473,7 +588,12 @@ function scheduleAvatarThinkingCycle(mode: AvatarAnimationMode, status: string) 
     }
 
     avatarAnimationTimer = setTimeout(() => {
+        if (runToken !== avatarAnimationRunToken) {
+            return;
+        }
+
         avatarAnimationTimer = null;
+        avatarAnimationPlaybackMode = "idle";
 
         const nextAutoStatus = currentAutoThinkingStatus();
         if (nextAutoStatus) {
@@ -482,7 +602,7 @@ function scheduleAvatarThinkingCycle(mode: AvatarAnimationMode, status: string) 
         }
 
         resetAvatarAnimationState();
-    }, THINKING_ANIMATION_DURATION_MS);
+    }, avatarAnimationDurationMs(mode));
 }
 
 function syncAutoThinkingAnimation() {
@@ -594,7 +714,22 @@ function normalizeTtsControlValue(value: number, fallback: number, min: number, 
 }
 
 function normalizeTtsSpeed(value: number) {
-    return normalizeTtsControlValue(value, DEFAULT_TTS_SPEED, MIN_TTS_SPEED, MAX_TTS_SPEED);
+    if (!Number.isFinite(value)) {
+        return DEFAULT_TTS_SPEED;
+    }
+
+    let nearestSpeed: DiscreteTtsSpeed = TTS_SPEED_OPTIONS[0];
+    let nearestDistance = Math.abs(value - nearestSpeed);
+
+    for (const candidate of TTS_SPEED_OPTIONS) {
+        const distance = Math.abs(value - candidate);
+        if (distance < nearestDistance) {
+            nearestSpeed = candidate;
+            nearestDistance = distance;
+        }
+    }
+
+    return nearestSpeed;
 }
 
 function normalizeTtsStreamingInterval(value: number) {
@@ -606,7 +741,7 @@ function normalizeTtsStreamingInterval(value: number) {
     );
 }
 
-function currentTtsRequestSettings(): TTSRequestSettings {
+function snapshotTtsRequestSettings(): TTSRequestSettings {
     return {
         speed: normalizeTtsSpeed(state.selectedTtsSpeed),
         streamingInterval: normalizeTtsStreamingInterval(state.selectedTtsStreamingInterval),
@@ -668,6 +803,585 @@ function traceVoiceAgent(event: string, payload?: unknown) {
     }
 
     console.log(`[voice-agent] ${timestamp} ${event}`, payload);
+}
+
+async function fetchJsonWithTimeout<T>(url: string, timeoutMs = LOCAL_RUNTIME_TIMEOUT_MS) {
+    const controller = new AbortController();
+    const timeoutId = window.setTimeout(() => {
+        controller.abort();
+    }, timeoutMs);
+
+    try {
+        const response = await fetch(url, {
+            cache: "no-store",
+            signal: controller.signal,
+        });
+
+        if (!response.ok) {
+            throw new Error(`Aidana request failed with status ${response.status}.`);
+        }
+
+        return await response.json() as T;
+    } catch (error) {
+        if (error instanceof DOMException && error.name === "AbortError") {
+            throw new Error(`Aidana request timed out after ${timeoutMs}ms.`);
+        }
+
+        if (error instanceof Error && error.message === "Failed to fetch") {
+            throw new Error(`Aidana is not reachable on localhost within ${timeoutMs}ms.`);
+        }
+
+        throw error instanceof Error ? error : new Error(String(error));
+    } finally {
+        clearTimeout(timeoutId);
+    }
+}
+
+function runtimeIsHealthy(status: AidanaRuntimeStatus | null) {
+    return status?.all_healthy === true;
+}
+
+function runtimeServiceTone(service: AidanaRuntimeServiceStatus | null) {
+    if (!service) {
+        return "idle";
+    }
+
+    if (service.healthy) {
+        return "active";
+    }
+
+    if (service.state === "error") {
+        return "error";
+    }
+
+    if (
+        service.state === "starting" ||
+        service.state === "loading" ||
+        service.state === "downloading" ||
+        service.state === "running"
+    ) {
+        return "warn";
+    }
+
+    return "idle";
+}
+
+function runtimeServiceEntries(status: AidanaRuntimeStatus | null = state.runtimeStatus) {
+    if (!status) {
+        return [
+            {
+                id: "asr",
+                label: "ASR",
+                displayText: "Waiting for Aidana…",
+                tone: "idle",
+                meta: "Local status route unavailable",
+            },
+            {
+                id: "tts",
+                label: "TTS",
+                displayText: "Waiting for Aidana…",
+                tone: "idle",
+                meta: "Local status route unavailable",
+            },
+            {
+                id: "mcp",
+                label: "MCP",
+                displayText: "Waiting for Aidana…",
+                tone: "idle",
+                meta: "Local status route unavailable",
+            },
+        ] as const;
+    }
+
+    return [
+        {
+            id: "asr",
+            label: "ASR",
+            displayText: status.asr.displayText,
+            tone: runtimeServiceTone(status.asr),
+            meta: status.asr.port ? `Port ${status.asr.port}` : null,
+        },
+        {
+            id: "tts",
+            label: "TTS",
+            displayText: status.tts.displayText,
+            tone: runtimeServiceTone(status.tts),
+            meta: status.tts.port ? `Port ${status.tts.port}` : null,
+        },
+        {
+            id: "mcp",
+            label: "MCP",
+            displayText: status.mcp.displayText,
+            tone: runtimeServiceTone(status.mcp),
+            meta: status.mcp.autoStart === false
+                ? "Auto-start disabled"
+                : status.mcp.port
+                    ? `Port ${status.mcp.port}`
+                    : null,
+        },
+    ] as const;
+}
+
+function idleRuntimeSummaryText() {
+    if (!state.runtimeStatus) {
+        return "Aidana runtime is not reachable yet. Activate Session to wait for local startup and automatically continue once ASR, TTS, and MCP are healthy.";
+    }
+
+    return `Aidana runtime: ASR ${state.runtimeStatus.asr.displayText}; TTS ${state.runtimeStatus.tts.displayText}; MCP ${state.runtimeStatus.mcp.displayText}.`;
+}
+
+function renderRuntimeStatusPanel() {
+    const host = document.getElementById("voice-runtime-status");
+    if (!host) {
+        return;
+    }
+
+    const entries = runtimeServiceEntries();
+    $(host).update(
+        <div class="voice-runtime-status-wrap">
+            <div class="voice-runtime-status-grid">
+                {entries.map((entry) => (
+                    <div class="voice-runtime-service" data-tone={entry.tone} key={entry.id}>
+                        <div class="voice-runtime-service-label">{entry.label}</div>
+                        <div class="voice-runtime-service-value">{entry.displayText}</div>
+                        {entry.meta ? <div class="voice-runtime-service-meta">{entry.meta}</div> : null}
+                    </div>
+                ))}
+            </div>
+            <div class="voice-runtime-status-foot">
+                {runtimeIsHealthy(state.runtimeStatus)
+                    ? "All local services are healthy."
+                    : state.runtimeStatus
+                        ? "Waiting for all local services to report healthy state."
+                        : "Open Aidana or wait for the local status route to come online."}
+            </div>
+        </div>,
+    );
+}
+
+function cancelRuntimeWait() {
+    if (!state.runtimeWaitVisible) {
+        return;
+    }
+
+    state.runtimeWaitToken += 1;
+    state.runtimeWaitVisible = false;
+    state.preparingSession = false;
+    appendLog("Voice session activation cancelled while waiting for Aidana runtime.");
+    setStatus(
+        "Activation Cancelled",
+        "Aidana is still starting. Activate Session again when you want to retry.",
+    );
+    renderSessionState();
+}
+
+function renderRuntimeWaitModal() {
+    const host = document.getElementById("voice-runtime-modal-root");
+    if (!host) {
+        return;
+    }
+
+    if (!state.runtimeWaitVisible) {
+        $(host).update(<div />);
+        return;
+    }
+
+    const entries = runtimeServiceEntries();
+    $(host).update(
+        <div class="voice-runtime-modal-backdrop">
+            <div class="voice-runtime-modal-card">
+                <div class="voice-runtime-modal-head">
+                    <div class="voice-runtime-spinner" aria-hidden="true" />
+                    <div class="voice-runtime-modal-copy">
+                        <div class="voice-runtime-modal-kicker">Preparing Local Services</div>
+                        <h2>Waiting for Aidana</h2>
+                        <p>
+                            {state.runtimeStatus
+                                ? "The voice session will continue automatically once ASR, TTS, and MCP all report healthy status."
+                                : "Trying to reach Aidana on localhost. The browser keeps polling the local status route every second."}
+                        </p>
+                    </div>
+                </div>
+
+                <div class="voice-runtime-status-grid is-modal">
+                    {entries.map((entry) => (
+                        <div class="voice-runtime-service" data-tone={entry.tone} key={`modal:${entry.id}`}>
+                            <div class="voice-runtime-service-label">{entry.label}</div>
+                            <div class="voice-runtime-service-value">{entry.displayText}</div>
+                            {entry.meta ? <div class="voice-runtime-service-meta">{entry.meta}</div> : null}
+                        </div>
+                    ))}
+                </div>
+
+                <div class="voice-runtime-modal-foot">
+                    <span>Polling localhost every {RUNTIME_STATUS_POLL_INTERVAL_MS / 1000}s</span>
+                    <Button size="sm" variant="outline" onClick={() => cancelRuntimeWait()}>
+                        Cancel
+                    </Button>
+                </div>
+            </div>
+        </div>,
+    );
+}
+
+async function refreshAidanaRuntimeStatus(options?: {
+    timeoutMs?: number;
+    silent?: boolean;
+}) {
+    const timeoutMs = options?.timeoutMs ?? LOCAL_RUNTIME_TIMEOUT_MS;
+    const silent = options?.silent ?? false;
+
+    try {
+        const runtimeStatus = await fetchJsonWithTimeout<AidanaRuntimeStatus>(STATUS_URL, timeoutMs);
+        state.runtimeStatus = runtimeStatus;
+        state.asrHealthy = runtimeStatus.asr.healthy;
+        renderSessionState();
+        return runtimeStatus;
+    } catch (error) {
+        state.runtimeStatus = null;
+        if (!state.sessionActive) {
+            state.asrHealthy = null;
+        }
+        renderSessionState();
+
+        if (!silent) {
+            const message = error instanceof Error ? error.message : String(error);
+            appendLog(`Aidana runtime status unavailable: ${message}`);
+        }
+
+        return null;
+    }
+}
+
+async function waitForAidanaRuntimeReady() {
+    let runtimeStatus = await refreshAidanaRuntimeStatus({
+        timeoutMs: LOCAL_RUNTIME_TIMEOUT_MS,
+        silent: true,
+    });
+
+    if (runtimeIsHealthy(runtimeStatus)) {
+        void loadVoiceAgentConfigs();
+        return true;
+    }
+
+    const waitToken = state.runtimeWaitToken + 1;
+    state.runtimeWaitToken = waitToken;
+    state.runtimeWaitVisible = true;
+    appendLog("Waiting for Aidana runtime to become healthy.");
+    setStatus(
+        "Waiting for Aidana",
+        "The voice session will start automatically once ASR, TTS, and MCP are all healthy.",
+    );
+    renderSessionState();
+
+    while (waitToken === state.runtimeWaitToken) {
+        if (runtimeIsHealthy(runtimeStatus)) {
+            state.runtimeWaitVisible = false;
+            appendLog("Aidana runtime is healthy. Continuing voice session activation.");
+            void loadVoiceAgentConfigs();
+            renderSessionState();
+            return true;
+        }
+
+        await new Promise((resolve) => window.setTimeout(resolve, RUNTIME_STATUS_POLL_INTERVAL_MS));
+        if (waitToken !== state.runtimeWaitToken) {
+            return false;
+        }
+
+        runtimeStatus = await refreshAidanaRuntimeStatus({
+            timeoutMs: LOCAL_RUNTIME_TIMEOUT_MS,
+            silent: true,
+        });
+    }
+
+    return false;
+}
+
+function classifySpeechRate(speechRateSps: number) {
+    if (speechRateSps < SPEECH_RATE_SLOW_THRESHOLD_SPS) {
+        return "slow";
+    }
+
+    if (speechRateSps > SPEECH_RATE_FAST_THRESHOLD_SPS) {
+        return "fast";
+    }
+
+    return "normal";
+}
+
+function recommendedTtsSpeedForSpeechRate(speechRateSps: number): DiscreteTtsSpeed {
+    if (speechRateSps < SPEECH_RATE_SLOW_THRESHOLD_SPS) {
+        return 3;
+    }
+
+    if (speechRateSps > SPEECH_RATE_FAST_THRESHOLD_SPS) {
+        return 5;
+    }
+
+    return 4;
+}
+
+function postSpeechRateControl(message: Record<string, unknown>) {
+    if (!state.speechRateNode) {
+        return false;
+    }
+
+    state.speechRateNode.port.postMessage(message);
+    return true;
+}
+
+function resetSpeechRateSession(reason: string) {
+    state.speechRateActiveUtteranceId = null;
+
+    if (!postSpeechRateControl({
+        type: "reset-session",
+        sessionId: state.speechRateSessionId,
+        reason,
+    })) {
+        return;
+    }
+
+    traceVoiceAgent("speech-rate session reset", {
+        sessionId: state.speechRateSessionId,
+        reason,
+    });
+}
+
+function setSpeechRatePaused(paused: boolean, reason: string) {
+    if (!postSpeechRateControl({
+        type: "set-paused",
+        sessionId: state.speechRateSessionId,
+        paused,
+        reason,
+    })) {
+        return;
+    }
+
+    traceVoiceAgent("speech-rate pause", {
+        sessionId: state.speechRateSessionId,
+        paused,
+        reason,
+    });
+}
+
+function startSpeechRateUtterance(reason: string) {
+    if (
+        !state.speechRateNode ||
+        !state.sessionActive ||
+        state.awaitingFinal ||
+        state.ttsGateActive ||
+        state.speechRateActiveUtteranceId != null
+    ) {
+        return;
+    }
+
+    const utteranceId = state.speechRateNextUtteranceId;
+    state.speechRateNextUtteranceId += 1;
+    state.speechRateActiveUtteranceId = utteranceId;
+    state.speechRateNode.port.postMessage({
+        type: "start-utterance",
+        sessionId: state.speechRateSessionId,
+        utteranceId,
+        reason,
+    });
+
+    traceVoiceAgent("speech-rate utterance start", {
+        sessionId: state.speechRateSessionId,
+        utteranceId,
+        reason,
+    });
+}
+
+function discardSpeechRateUtterance(reason: string) {
+    const utteranceId = state.speechRateActiveUtteranceId;
+    state.speechRateActiveUtteranceId = null;
+
+    if (utteranceId == null || !state.speechRateNode) {
+        return;
+    }
+
+    state.speechRateNode.port.postMessage({
+        type: "discard-utterance",
+        sessionId: state.speechRateSessionId,
+        utteranceId,
+        reason,
+    });
+
+    traceVoiceAgent("speech-rate utterance discard", {
+        sessionId: state.speechRateSessionId,
+        utteranceId,
+        reason,
+    });
+}
+
+function finalizeSpeechRateUtterance(reason: string) {
+    const utteranceId = state.speechRateActiveUtteranceId;
+    state.speechRateActiveUtteranceId = null;
+
+    if (utteranceId == null || !state.speechRateNode) {
+        return;
+    }
+
+    state.speechRateNode.port.postMessage({
+        type: "finalize-utterance",
+        sessionId: state.speechRateSessionId,
+        utteranceId,
+        reason,
+    });
+
+    traceVoiceAgent("speech-rate utterance finalize", {
+        sessionId: state.speechRateSessionId,
+        utteranceId,
+        reason,
+    });
+}
+
+function handleSpeechRateUtteranceSummary(summary: SpeechRateUtteranceSummary) {
+    if (
+        summary.sessionId !== state.speechRateSessionId ||
+        (!state.sessionActive && !state.awaitingFinal)
+    ) {
+        return;
+    }
+
+    const band = classifySpeechRate(summary.speechRateSps);
+    const recommendedTtsSpeed = recommendedTtsSpeedForSpeechRate(summary.speechRateSps);
+    appendLog(
+        `Speech rate: ${summary.totalSyllables} syllables over ${summary.totalVoicedSec.toFixed(2)} voiced s (${summary.speechRateSps.toFixed(2)} syll/s, ${band}, suggested TTS speed ${recommendedTtsSpeed}, voiced ${(summary.voicedRatio * 100).toFixed(0)}% of ${summary.totalSec.toFixed(2)}s).`,
+    );
+    traceVoiceAgent("speech-rate utterance summary", {
+        ...summary,
+        band,
+        recommendedTtsSpeed,
+    });
+}
+
+function handleSpeechRateWorkletMessage(payload: unknown) {
+    if (!payload || typeof payload !== "object") {
+        return;
+    }
+
+    const data = payload as Partial<SpeechRateUtteranceSummary> | Partial<SpeechRateWorkletWarning>;
+    if (data.type === "utterance-summary") {
+        if (
+            typeof data.sessionId !== "number" ||
+            typeof data.utteranceId !== "number" ||
+            typeof data.totalSyllables !== "number" ||
+            typeof data.totalVoicedSec !== "number" ||
+            typeof data.totalSec !== "number" ||
+            typeof data.speechRateSps !== "number" ||
+            typeof data.estWpm !== "number" ||
+            typeof data.voicedRatio !== "number" ||
+            typeof data.minPeakGapSec !== "number" ||
+            typeof data.syllablesPerWord !== "number" ||
+            typeof data.noiseDb !== "number"
+        ) {
+            return;
+        }
+
+        handleSpeechRateUtteranceSummary(data as SpeechRateUtteranceSummary);
+        return;
+    }
+
+    if (data.type === "warning" && typeof data.message === "string") {
+        if (
+            typeof data.sessionId === "number" &&
+            data.sessionId !== state.speechRateSessionId
+        ) {
+            return;
+        }
+
+        appendLog(`Speech-rate analyzer warning: ${data.message}`);
+        traceVoiceAgent("speech-rate warning", data);
+    }
+}
+
+async function setupSpeechRateAnalyzer(
+    audioCtx: AudioContext,
+    source: MediaStreamAudioSourceNode,
+    sessionId: number,
+) {
+    if (!SPEECH_RATE_ANALYZER_ENABLED) {
+        return;
+    }
+
+    try {
+        await audioCtx.audioWorklet.addModule(SPEECH_RATE_WORKLET_URL);
+
+        if (
+            sessionId !== state.speechRateSessionId ||
+            state.audioCtx !== audioCtx ||
+            state.source !== source
+        ) {
+            return;
+        }
+
+        const node = new AudioWorkletNode(audioCtx, "speech-rate-processor", {
+            numberOfInputs: 1,
+            numberOfOutputs: 0,
+            channelCount: 1,
+            processorOptions: {
+                minPeakGapSec: SPEECH_RATE_MIN_PEAK_GAP_SEC,
+                syllablesPerWord: SPEECH_RATE_SYLLABLES_PER_WORD,
+            },
+        });
+
+        node.port.onmessage = (event) => {
+            handleSpeechRateWorkletMessage(event.data);
+        };
+
+        source.connect(node);
+        state.speechRateNode = node;
+        resetSpeechRateSession("session-start");
+        appendLog(
+            `Speech-rate analyzer ready in background (peak gap ${SPEECH_RATE_MIN_PEAK_GAP_SEC.toFixed(2)}s, word factor ${SPEECH_RATE_SYLLABLES_PER_WORD.toFixed(2)}).`,
+        );
+        traceVoiceAgent("speech-rate analyzer ready", {
+            sessionId,
+            workletUrl: SPEECH_RATE_WORKLET_URL,
+            minPeakGapSec: SPEECH_RATE_MIN_PEAK_GAP_SEC,
+            syllablesPerWord: SPEECH_RATE_SYLLABLES_PER_WORD,
+            blocking: false,
+        });
+    } catch (error) {
+        if (sessionId !== state.speechRateSessionId) {
+            return;
+        }
+
+        state.speechRateNode = null;
+        state.speechRateActiveUtteranceId = null;
+        const message = error instanceof Error ? error.message : String(error);
+        appendLog(`Speech-rate analyzer unavailable: ${message}`);
+        traceVoiceAgent("speech-rate analyzer unavailable", {
+            sessionId,
+            workletUrl: SPEECH_RATE_WORKLET_URL,
+            message,
+        });
+    }
+}
+
+function teardownSpeechRateAnalyzer() {
+    state.speechRateActiveUtteranceId = null;
+
+    const node = state.speechRateNode;
+    state.speechRateNode = null;
+    if (!node) {
+        return;
+    }
+
+    node.port.onmessage = null;
+
+    try {
+        node.port.postMessage({
+            type: "reset-session",
+            sessionId: state.speechRateSessionId,
+            reason: "audio-teardown",
+        });
+    } catch { }
+
+    try {
+        node.disconnect();
+    } catch { }
 }
 
 function resetAsrDebugCounters() {
@@ -1132,6 +1846,8 @@ function activateTtsGate() {
         return;
     }
 
+    discardSpeechRateUtterance("tts-gate");
+    setSpeechRatePaused(true, "tts-gate");
     state.ttsGateActive = true;
     state.currentLevel = 0;
     state.residual = new Float32Array(0);
@@ -1155,6 +1871,7 @@ function releaseTtsGateIfIdle() {
     }
 
     state.ttsGateActive = false;
+    setSpeechRatePaused(false, "tts-drained");
     state.ttsPlaying = false;
     state.currentLevel = 0;
     targetMouthValue = 0;
@@ -1262,12 +1979,10 @@ async function loadTtsConfig(force = false): Promise<TTSConfig> {
 
     const hadConfig = state.ttsConfig != null;
     ttsConfigPromise = (async () => {
-        const response = await fetch(TTS_CONFIG_URL, { cache: "no-store" });
-        if (!response.ok) {
-            throw new Error(`Aidana TTS config request failed with status ${response.status}.`);
-        }
-
-        const data = (await response.json()) as Partial<TTSConfig>;
+        const data = await fetchJsonWithTimeout<Partial<TTSConfig>>(
+            TTS_CONFIG_URL,
+            LOCAL_RUNTIME_TIMEOUT_MS,
+        );
         const config: TTSConfig = {
             port: typeof data.port === "number" && data.port > 0 ? data.port : DEFAULT_TTS_PORT,
             model: typeof data.model === "string" && data.model.length > 0
@@ -1342,12 +2057,10 @@ async function loadAsrConfig(force = false): Promise<ASRConfig> {
 
     const hadConfig = state.asrConfig != null;
     asrConfigPromise = (async () => {
-        const response = await fetch(ASR_CONFIG_URL, { cache: "no-store" });
-        if (!response.ok) {
-            throw new Error(`Aidana ASR config request failed with status ${response.status}.`);
-        }
-
-        const data = (await response.json()) as Partial<ASRConfig>;
+        const data = await fetchJsonWithTimeout<Partial<ASRConfig>>(
+            ASR_CONFIG_URL,
+            LOCAL_RUNTIME_TIMEOUT_MS,
+        );
         const hotwords = Array.isArray(data.hotwords)
             ? data.hotwords.filter((item): item is string => typeof item === "string")
             : [];
@@ -1398,7 +2111,7 @@ async function loadAsrConfig(force = false): Promise<ASRConfig> {
     return asrConfigPromise;
 }
 
-async function initializeVoiceAgentConfig() {
+async function loadVoiceAgentConfigs() {
     const [asrResult, ttsResult] = await Promise.allSettled([
         loadAsrConfig(),
         loadTtsConfig(),
@@ -1423,6 +2136,22 @@ async function initializeVoiceAgentConfig() {
         asrLoaded: asrResult.status === "fulfilled",
         ttsLoaded: ttsResult.status === "fulfilled",
     };
+}
+
+async function initializeVoiceAgentConfig() {
+    const runtimeStatus = await refreshAidanaRuntimeStatus({
+        timeoutMs: LOCAL_RUNTIME_TIMEOUT_MS,
+        silent: true,
+    });
+
+    if (!runtimeIsHealthy(runtimeStatus)) {
+        return {
+            asrLoaded: false,
+            ttsLoaded: false,
+        };
+    }
+
+    return await loadVoiceAgentConfigs();
 }
 
 function appendUint8Arrays(left: Uint8Array, right: Uint8Array) {
@@ -2014,7 +2743,7 @@ function queueTtsEcho(text: string) {
         return;
     }
 
-    const requestSettings = currentTtsRequestSettings();
+    const requestSettings = snapshotTtsRequestSettings();
     state.ttsQueue.push({
         id: createOverlayMessageId(),
         text: normalizedText,
@@ -2092,8 +2821,10 @@ function renderSessionState() {
         : state.sessionActive
             ? "The dedicated window is listening locally and will keep running while this window stays open."
         : state.preparingSession
-            ? "Waiting for microphone access and validating the local Aidana ASR runtime."
-            : "Activate the session to grant microphone access and start local ASR streaming.";
+            ? state.runtimeWaitVisible
+                ? "Waiting for Aidana to report healthy ASR, TTS, and MCP services before opening the voice session."
+                : "Requesting microphone access and preparing the local voice session."
+            : idleRuntimeSummaryText();
 
     setPill(
         "session-pill",
@@ -2131,25 +2862,30 @@ function renderSessionState() {
                     : "idle",
     );
 
-    const asrText = state.asrHealthy === false
-        ? "ASR offline"
-        : state.socketState === "streaming"
-            ? "ASR streaming"
-            : state.socketState === "waiting"
-                ? "Awaiting final"
-                : state.asrHealthy === true
-                    ? "ASR ready"
-                    : "ASR unchecked";
+    const idleAsrStatus = state.runtimeStatus?.asr ?? null;
+    const asrText = state.socketState === "streaming"
+        ? "ASR streaming"
+        : state.socketState === "waiting"
+            ? "Awaiting final"
+            : idleAsrStatus
+                ? `ASR ${idleAsrStatus.displayText}`
+                : state.asrHealthy === false
+                    ? "ASR offline"
+                    : state.asrHealthy === true
+                        ? "ASR ready"
+                        : "ASR unchecked";
 
-    const asrTone = state.asrHealthy === false
-        ? "error"
-        : state.socketState === "streaming"
-            ? "active"
-            : state.socketState === "waiting"
-                ? "warn"
-                : state.asrHealthy === true
-                    ? "active"
-                    : "idle";
+    const asrTone = state.socketState === "streaming"
+        ? "active"
+        : state.socketState === "waiting"
+            ? "warn"
+            : idleAsrStatus
+                ? runtimeServiceTone(idleAsrStatus)
+                : state.asrHealthy === false
+                    ? "error"
+                    : state.asrHealthy === true
+                        ? "active"
+                        : "idle";
 
     setPill("asr-pill", asrText, asrTone);
 
@@ -2165,6 +2901,8 @@ function renderSessionState() {
     syncAsrLanguageSelect();
     syncTtsControlInputs();
     syncVoiceSpaceSelect();
+    renderRuntimeStatusPanel();
+    renderRuntimeWaitModal();
 }
 
 function rememberPrerollFrame(frame: Float32Array) {
@@ -2378,6 +3116,7 @@ function openAsrSocket() {
         }
 
         traceVoiceAgent("asr socket error", event);
+        discardSpeechRateUtterance("asr-socket-error");
 
         finalizeStreamingUserOverlay(currentStreamingUtteranceText());
         state.asrHealthy = false;
@@ -2406,6 +3145,8 @@ function openAsrSocket() {
             reason: event.reason,
             wasClean: event.wasClean,
         });
+
+        discardSpeechRateUtterance("asr-socket-close");
 
         state.socket = null;
         state.websocketQueue = [];
@@ -2475,6 +3216,7 @@ function flushUtterance() {
         ? "waiting"
         : "connecting";
     syncAutoThinkingAnimation();
+    finalizeSpeechRateUtterance("voice-end");
 
     traceVoiceAgent("utterance flushing", {
         pcmPacketsSent: state.pcmPacketsSent,
@@ -2531,6 +3273,7 @@ function flushBufferedShortUtterance() {
     }
 
     if (state.stableVoiceFrames < SHORT_UTTERANCE_FALLBACK_MIN_FRAMES) {
+        discardSpeechRateUtterance("discarded-short-utterance");
         appendLog(
             `Discarding buffered speech shorter than ${SHORT_UTTERANCE_FALLBACK_MIN_MS}ms.`,
         );
@@ -2707,6 +3450,9 @@ async function ensureAvatarReady() {
 
 async function teardownAudioSession() {
     stopScheduledTtsSources();
+    discardSpeechRateUtterance("audio-teardown");
+    setSpeechRatePaused(true, "audio-teardown");
+    teardownSpeechRateAnalyzer();
 
     try {
         state.processor?.disconnect();
@@ -2826,6 +3572,10 @@ function handleVoiceFrame(frame: Float32Array, result: VoiceDetectionResult) {
     state.currentLevel = Math.min(1, result.rms * 8);
     targetMouthValue = result.isVoiceStable ? Math.min(1, result.rms * 6) : 0;
 
+    if (result.onVoiceStart) {
+        startSpeechRateUtterance("voice-start");
+    }
+
     const startedUtterance = maybeStartUtterance(frame, result);
 
     if (result.onVoiceStart) {
@@ -2867,6 +3617,11 @@ async function startVoiceSession(deviceId: string | null) {
         state.preparingSession = true;
         renderSessionState();
 
+        const runtimeReady = await waitForAidanaRuntimeReady();
+        if (!runtimeReady) {
+            return;
+        }
+
         setStatus(
             "Requesting Microphone",
             "Approve microphone access in the browser prompt to start the dedicated voice session.",
@@ -2891,7 +3646,7 @@ async function startVoiceSession(deviceId: string | null) {
         state.selectedDeviceId = resolvedDeviceId;
         await WorkerRpc.setPrefValue(DEVICE_PREF_KEY, resolvedDeviceId ?? "", true);
 
-        await Promise.all([ensureAvatarReady(), assertAsrReady()]);
+        await ensureAvatarReady();
 
         state.detector = await createVoiceDetector(VOICE_DETECTOR_TUNING);
         appendLog(
@@ -2900,11 +3655,21 @@ async function startVoiceSession(deviceId: string | null) {
 
         const audioCtx = new AudioContext();
         await audioCtx.resume();
+        state.speechRateSessionId += 1;
+        state.speechRateNextUtteranceId = 1;
+        state.speechRateActiveUtteranceId = null;
 
         const source = audioCtx.createMediaStreamSource(stream);
         const processor = audioCtx.createScriptProcessor(4096, 1, 1);
         const muteNode = audioCtx.createGain();
         muteNode.gain.value = 0;
+
+        state.audioCtx = audioCtx;
+        state.source = source;
+        state.processor = processor;
+        state.muteNode = muteNode;
+        state.residual = new Float32Array(0);
+        void setupSpeechRateAnalyzer(audioCtx, source, state.speechRateSessionId);
 
         source.connect(processor);
         processor.connect(muteNode);
@@ -2959,10 +3724,6 @@ async function startVoiceSession(deviceId: string | null) {
         };
 
         state.micStream = stream;
-        state.audioCtx = audioCtx;
-        state.source = source;
-        state.processor = processor;
-        state.muteNode = muteNode;
         state.residual = new Float32Array(0);
         state.prerollFrames = [];
         resetVoiceActivityGate();
@@ -3026,6 +3787,7 @@ async function stopVoiceSession(reason: string) {
     state.preparingSession = false;
     state.awaitingFinal = false;
     state.utteranceActive = false;
+    discardSpeechRateUtterance("session-stopped");
     resetVoiceActivityGate();
     state.currentLevel = 0;
     targetMouthValue = 0;
@@ -3202,9 +3964,10 @@ async function selectAvatar(avatarId: string) {
 }
 
 const App: FC = () => (
-    <main class="voice-agent-shell">
-        <section class="voice-side">
-            <div class="voice-side-scroll">
+    <div class="voice-agent-page-root">
+        <main class="voice-agent-shell">
+            <section class="voice-side">
+                <div class="voice-side-scroll">
                 <Card>
                     <CardHeader class="space-y-5">
                         <div class="voice-kicker">Aidana local voice runtime</div>
@@ -3341,6 +4104,19 @@ const App: FC = () => (
 
                 <Card>
                     <CardHeader>
+                        <CardTitle>Aidana Runtime</CardTitle>
+                        <CardDescription>
+                            Local startup state from Aidana&apos;s status routes, even before a
+                            voice session is active.
+                        </CardDescription>
+                    </CardHeader>
+                    <CardContent>
+                        <div id="voice-runtime-status" />
+                    </CardContent>
+                </Card>
+
+                <Card>
+                    <CardHeader>
                         <CardTitle>Transcripts</CardTitle>
                         <CardDescription>
                             Live partial text appears first. Confirmed utterances move into
@@ -3388,12 +4164,12 @@ const App: FC = () => (
                         <pre id="voice-log" class="voice-log" />
                     </CardContent>
                 </Card>
-            </div>
-        </section>
+                </div>
+            </section>
 
-        <section class="voice-stage-card">
-            <Card class="voice-stage-card">
-                <CardContent class="voice-stage-wrap p-5">
+            <section class="voice-stage-card">
+                <Card class="voice-stage-card">
+                    <CardContent class="voice-stage-wrap p-5">
                     <div class="voice-stage-toolbar">
                         <div class="voice-stage-selectors">
                             <div class="voice-avatar-picker">
@@ -3422,7 +4198,7 @@ const App: FC = () => (
                                     type="number"
                                     min={MIN_TTS_SPEED}
                                     max={MAX_TTS_SPEED}
-                                    step="0.05"
+                                    step="1"
                                     inputMode="decimal"
                                 />
                             </div>
@@ -3492,10 +4268,12 @@ const App: FC = () => (
                             <div id="voice-meter-fill" class="voice-meter-fill" />
                         </div>
                     </div>
-                </CardContent>
-            </Card>
-        </section>
-    </main>
+                    </CardContent>
+                </Card>
+            </section>
+        </main>
+        <div id="voice-runtime-modal-root" />
+    </div>
 );
 
 render(<App />, document.getElementById("app")!);

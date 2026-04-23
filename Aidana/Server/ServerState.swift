@@ -6,6 +6,31 @@
 import Combine
 import Foundation
 
+struct RuntimeServiceStatusSnapshot: Codable, Sendable {
+    let state: String
+    let displayText: String
+    let ready: Bool
+    let healthy: Bool
+    let port: Int?
+    let autoStart: Bool?
+}
+
+struct RuntimeStatusSnapshot: Codable, Sendable {
+    let status: String
+    let allHealthy: Bool
+    let asr: RuntimeServiceStatusSnapshot
+    let tts: RuntimeServiceStatusSnapshot
+    let mcp: RuntimeServiceStatusSnapshot
+
+    enum CodingKeys: String, CodingKey {
+        case status
+        case allHealthy = "all_healthy"
+        case asr
+        case tts
+        case mcp
+    }
+}
+
 @MainActor
 final class ServerState: ObservableObject {
     enum Status: Equatable {
@@ -38,6 +63,23 @@ final class ServerState: ObservableObject {
                 return "Loading…"
             case .error(let message):
                 return "Error: \(message)"
+            }
+        }
+
+        var stateKey: String {
+            switch self {
+            case .stopped:
+                return "stopped"
+            case .starting:
+                return "starting"
+            case .running:
+                return "running"
+            case .downloading:
+                return "downloading"
+            case .loading:
+                return "loading"
+            case .error:
+                return "error"
             }
         }
     }
@@ -84,6 +126,28 @@ final class ServerState: ObservableObject {
             case .error(let msg): return "Error: \(msg)"
             }
         }
+
+        var stateKey: String {
+            switch self {
+            case .stopped:
+                return "stopped"
+            case .starting:
+                return "starting"
+            case .downloading:
+                return "downloading"
+            case .loading:
+                return "loading"
+            case .ready:
+                return "ready"
+            case .error:
+                return "error"
+            }
+        }
+
+        var isReady: Bool {
+            if case .ready = self { return true }
+            return false
+        }
     }
 
     enum MCPStatus: Equatable {
@@ -99,6 +163,24 @@ final class ServerState: ObservableObject {
             case .ready(let port): return "Running on \(port)"
             case .error(let message): return "Error: \(message)"
             }
+        }
+
+        var stateKey: String {
+            switch self {
+            case .stopped:
+                return "stopped"
+            case .starting:
+                return "starting"
+            case .ready:
+                return "ready"
+            case .error:
+                return "error"
+            }
+        }
+
+        var isReady: Bool {
+            if case .ready = self { return true }
+            return false
         }
     }
 
@@ -137,5 +219,51 @@ final class ServerState: ObservableObject {
 
     func setListeningMode(_ mode: ListeningMode) {
         listeningMode = mode
+    }
+
+    func runtimeStatusSnapshot(
+        asrPort: Int,
+        ttsPort: Int,
+        mcpPort: Int,
+        mcpAutoStart: Bool
+    ) -> RuntimeStatusSnapshot {
+        let asrHealthy = asrModelReady && status.isRunning
+        let ttsHealthy = ttsReady && ttsStatus.isReady
+        let mcpHealthy = mcpStatus.isReady
+
+        let asr = RuntimeServiceStatusSnapshot(
+            state: status.stateKey,
+            displayText: status.displayText,
+            ready: asrHealthy,
+            healthy: asrHealthy,
+            port: asrPort,
+            autoStart: nil
+        )
+
+        let tts = RuntimeServiceStatusSnapshot(
+            state: ttsStatus.stateKey,
+            displayText: ttsStatus.displayText,
+            ready: ttsHealthy,
+            healthy: ttsHealthy,
+            port: ttsPort,
+            autoStart: nil
+        )
+
+        let mcp = RuntimeServiceStatusSnapshot(
+            state: mcpStatus.stateKey,
+            displayText: mcpStatus.displayText,
+            ready: mcpHealthy,
+            healthy: mcpHealthy,
+            port: mcpPort,
+            autoStart: mcpAutoStart
+        )
+
+        return RuntimeStatusSnapshot(
+            status: "ok",
+            allHealthy: asr.healthy && tts.healthy && mcp.healthy,
+            asr: asr,
+            tts: tts,
+            mcp: mcp
+        )
     }
 }

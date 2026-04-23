@@ -29,13 +29,14 @@ actor MCPServer {
     }
 
     private struct ClientConfigurationFile: Encodable {
-        let servers: [String: ClientConfigurationEntry]
         let mcpServers: [String: ClientConfigurationEntry]
     }
 
     private struct ClientConfigurationEntry: Encodable {
-        let type: String
+        let transport: String
         let url: URL
+        let enabled: Bool
+        let timeout: Int
     }
 
     enum MCPError: LocalizedError {
@@ -134,7 +135,7 @@ actor MCPServer {
         process = proc
         isRunning = true
 
-        prepareDefaultClientConfigurationIfNeeded(configuration: configuration)
+        syncDefaultClientConfiguration(configuration: configuration)
 
         let log = onLog
         log?("MCP: launched embedded \(artifacts.runtimeKind.rawValue) runtime (PID \(proc.processIdentifier))")
@@ -228,7 +229,7 @@ actor MCPServer {
         throw MCPError.runtimeMissing(rootURL)
     }
 
-    private func prepareDefaultClientConfigurationIfNeeded(configuration: LaunchConfiguration) {
+    private func syncDefaultClientConfiguration(configuration: LaunchConfiguration) {
         let fileManager = FileManager.default
         let configDirectoryURL = defaultClientConfigDirectoryURL(fileManager: fileManager)
         let configURL = configDirectoryURL.appendingPathComponent(defaultClientConfigFileName)
@@ -238,6 +239,9 @@ actor MCPServer {
                 at: configDirectoryURL,
                 withIntermediateDirectories: true
             )
+
+            let configData = try defaultClientConfigurationData(configuration: configuration)
+            let didExist = fileManager.fileExists(atPath: configURL.path)
 
             var isDirectory = ObjCBool(false)
             if fileManager.fileExists(atPath: configURL.path, isDirectory: &isDirectory) {
@@ -252,30 +256,38 @@ actor MCPServer {
                     )
                 }
 
-                return
+                let existingData = try Data(contentsOf: configURL)
+                if existingData == configData {
+                    return
+                }
             }
 
-            let entry = ClientConfigurationEntry(
-                type: mcpTransport,
-                url: mcpEndpointURL(port: configuration.mcpPort)
-            )
-            let config = ClientConfigurationFile(
-                servers: [defaultClientConfigServerName: entry],
-                mcpServers: [defaultClientConfigServerName: entry]
-            )
-
-            let encoder = JSONEncoder()
-            encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-
-            var data = try encoder.encode(config)
-            data.append(0x0A)
-
-            try data.write(to: configURL, options: .atomic)
-            onLog?("MCP: wrote default client config to \(configURL.path)")
+            try configData.write(to: configURL, options: .atomic)
+            let action = didExist ? "updated" : "wrote"
+            onLog?("MCP: \(action) default client config at \(configURL.path)")
         } catch {
             logger.error("Failed to prepare default MCP client config: \(error.localizedDescription, privacy: .public)")
             onLog?("MCP: failed to prepare default client config at \(configURL.path): \(error.localizedDescription)")
         }
+    }
+
+    private func defaultClientConfigurationData(configuration: LaunchConfiguration) throws -> Data {
+        let entry = ClientConfigurationEntry(
+            transport: "streamable-http",
+            url: mcpEndpointURL(port: configuration.mcpPort),
+            enabled: true,
+            timeout: 30
+        )
+        let config = ClientConfigurationFile(
+            mcpServers: [defaultClientConfigServerName: entry]
+        )
+
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .withoutEscapingSlashes]
+
+        var data = try encoder.encode(config)
+        data.append(0x0A)
+        return data
     }
 
     private func defaultClientConfigDirectoryURL(fileManager: FileManager) -> URL {

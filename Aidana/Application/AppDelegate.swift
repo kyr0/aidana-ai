@@ -87,6 +87,39 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             await self.aiServer.setWakeWordProvider {
                 UserDefaults.standard.string(forKey: "preferences.wakeWord") ?? ""
             }
+            await self.aiServer.setRuntimeStatusProvider { [weak self] in
+                await MainActor.run {
+                    self?.currentRuntimeStatusSnapshot()
+                        ?? RuntimeStatusSnapshot(
+                            status: "ok",
+                            allHealthy: false,
+                            asr: RuntimeServiceStatusSnapshot(
+                                state: "stopped",
+                                displayText: "Stopped",
+                                ready: false,
+                                healthy: false,
+                                port: nil,
+                                autoStart: nil
+                            ),
+                            tts: RuntimeServiceStatusSnapshot(
+                                state: "stopped",
+                                displayText: "Stopped",
+                                ready: false,
+                                healthy: false,
+                                port: nil,
+                                autoStart: nil
+                            ),
+                            mcp: RuntimeServiceStatusSnapshot(
+                                state: "stopped",
+                                displayText: "Stopped",
+                                ready: false,
+                                healthy: false,
+                                port: nil,
+                                autoStart: true
+                            )
+                        )
+                }
+            }
             do {
                 _ = try await self.aiServer.setASRRuntimeConfiguration(self.currentASRRuntimeConfiguration())
             } catch {
@@ -140,6 +173,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
             let port = self.preferences.serverPort
             let cached = ModelManager.modelsAreCached()
+            var aiServerStarted = false
             await MainActor.run {
                 if cached {
                     self.serverState.setStatus(.loading)
@@ -147,6 +181,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 } else {
                     self.serverState.setStatus(.downloading(progress: nil))
                     self.logStore.append("Downloading ASR models…")
+                }
+                self.logStore.append("Starting status server on port \(port)…")
+            }
+
+            do {
+                try await self.aiServer.start(port: port)
+                aiServerStarted = true
+                await MainActor.run {
+                    self.logStore.append("Status routes listening on port \(port)")
+                }
+            } catch {
+                self.logger.error("Server start failed: \(error)")
+                await MainActor.run {
+                    self.serverState.setStatus(.error(error.localizedDescription))
+                    self.logStore.append("Server error: \(error.localizedDescription)")
                 }
             }
 
@@ -180,30 +229,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
                 await MainActor.run {
                     self.serverState.setASRModelReady(true)
+                    if aiServerStarted {
+                        self.serverState.setStatus(.running(port: port))
+                    }
                     self.logStore.append("ASR models loaded")
                 }
             } catch {
                 self.logger.error("ASR model preparation failed: \(error)")
                 await MainActor.run {
-                    self.logStore.append("ASR model error: \(error.localizedDescription)")
-                }
-            }
-
-            do {
-                await MainActor.run {
-                    self.serverState.setStatus(.starting)
-                    self.logStore.append("Starting server on port \(port)…")
-                }
-                try await self.aiServer.start(port: port)
-                await MainActor.run {
-                    self.serverState.setStatus(.running(port: port))
-                    self.logStore.append("Server listening on port \(port)")
-                }
-            } catch {
-                self.logger.error("Server start failed: \(error)")
-                await MainActor.run {
                     self.serverState.setStatus(.error(error.localizedDescription))
-                    self.logStore.append("Server error: \(error.localizedDescription)")
+                    self.logStore.append("ASR model error: \(error.localizedDescription)")
                 }
             }
 
@@ -604,6 +639,15 @@ private extension AppDelegate {
                 self.logStore.append("ASR hotword update failed: \(error.localizedDescription)")
             }
         }
+    }
+
+    func currentRuntimeStatusSnapshot() -> RuntimeStatusSnapshot {
+        serverState.runtimeStatusSnapshot(
+            asrPort: preferences.serverPort,
+            ttsPort: preferences.ttsPort,
+            mcpPort: preferences.mcpPort,
+            mcpAutoStart: preferences.mcpAutoStart
+        )
     }
 
 }

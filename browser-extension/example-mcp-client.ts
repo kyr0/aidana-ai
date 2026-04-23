@@ -11,8 +11,11 @@ type TextContentBlock = {
 };
 
 type HttpServerConfigEntry = {
+  transport?: string;
   type?: string;
   url?: string;
+  enabled?: boolean;
+  timeout?: number;
 };
 
 type McpConfigFile = {
@@ -50,12 +53,12 @@ function pickAidanaServerEntry(
   }
 
   const preferredEntry = entries.aidana;
-  if (preferredEntry?.type === "http" && preferredEntry.url) {
+  if ((preferredEntry?.transport === "streamable-http" || preferredEntry?.type === "http") && preferredEntry.url) {
     return { name: "aidana", entry: preferredEntry };
   }
 
   for (const [name, entry] of Object.entries(entries)) {
-    if (entry.type === "http" && entry.url) {
+    if ((entry.transport === "streamable-http" || entry.type === "http") && entry.url) {
       return { name, entry };
     }
   }

@@ -18,6 +18,7 @@ actor AIServer {
     var onLog: (@Sendable (String) -> Void)?
     var onModeChange: (@Sendable (String) -> Void)?   // "idle" or "active"
     var wakeWordProvider: (@Sendable () -> String)?    // returns current wake word
+    var runtimeStatusProvider: (@Sendable () async -> RuntimeStatusSnapshot)?
 
     func setLogCallback(_ callback: @escaping @Sendable (String) -> Void) {
         onLog = callback
@@ -29,6 +30,12 @@ actor AIServer {
 
     func setWakeWordProvider(_ provider: @escaping @Sendable () -> String) {
         wakeWordProvider = provider
+    }
+
+    func setRuntimeStatusProvider(
+        _ provider: @escaping @Sendable () async -> RuntimeStatusSnapshot
+    ) {
+        runtimeStatusProvider = provider
     }
 
     func setASRRuntimeConfiguration(_ configuration: ASRRuntimeConfiguration) async throws -> Bool {
@@ -67,6 +74,22 @@ actor AIServer {
         let workspacePath: String
         let autoStart: Bool
         let workQueuePort: Int
+    }
+
+    private struct HealthResponse: Codable {
+        let status: String
+        let asrReady: Bool
+        let ttsReady: Bool
+        let mcpReady: Bool
+        let allHealthy: Bool
+
+        enum CodingKeys: String, CodingKey {
+            case status
+            case asrReady = "asr_ready"
+            case ttsReady = "tts_ready"
+            case mcpReady = "mcp_ready"
+            case allHealthy = "all_healthy"
+        }
     }
 
     private static func defaultTTSReferenceAudioPath() -> String {
@@ -158,6 +181,33 @@ actor AIServer {
         }
     }
 
+    private static func fallbackRuntimeStatus(asrReady: Bool) -> RuntimeStatusSnapshot {
+        let asr = RuntimeServiceStatusSnapshot(
+            state: asrReady ? "running" : "starting",
+            displayText: asrReady ? "Running" : "Starting…",
+            ready: asrReady,
+            healthy: asrReady,
+            port: nil,
+            autoStart: nil
+        )
+        let unavailable = RuntimeServiceStatusSnapshot(
+            state: "stopped",
+            displayText: "Unavailable",
+            ready: false,
+            healthy: false,
+            port: nil,
+            autoStart: nil
+        )
+
+        return RuntimeStatusSnapshot(
+            status: "ok",
+            allHealthy: false,
+            asr: asr,
+            tts: unavailable,
+            mcp: unavailable
+        )
+    }
+
     func start(port: Int) async throws {
         guard !isRunning else {
             logger.warning("Server already running")
@@ -170,20 +220,56 @@ actor AIServer {
         let logFn = self.onLog
         let modeChangeFn = self.onModeChange
         let wakeWordFn = self.wakeWordProvider
+        let runtimeStatusProvider = self.runtimeStatusProvider
+
+        func currentRuntimeStatus() async -> RuntimeStatusSnapshot {
+            if let runtimeStatusProvider {
+                return await runtimeStatusProvider()
+            }
+
+            let asrReady = await modelMgr.asrReady
+            return Self.fallbackRuntimeStatus(asrReady: asrReady)
+        }
 
         // HTTP router for health/status endpoints
         let router = Router()
 
         router.get("/health") { _, _ -> Response in
-            let asrReady = await modelMgr.asrReady
-            let body = """
-            {"status":"ok","asr_ready":\(asrReady)}
-            """
-            return Response(
-                status: .ok,
-                headers: [.contentType: "application/json"],
-                body: .init(byteBuffer: ByteBuffer(string: body))
+            let runtimeStatus = await currentRuntimeStatus()
+
+            return Self.jsonResponse(
+                HealthResponse(
+                    status: "ok",
+                    asrReady: runtimeStatus.asr.ready,
+                    ttsReady: runtimeStatus.tts.ready,
+                    mcpReady: runtimeStatus.mcp.ready,
+                    allHealthy: runtimeStatus.allHealthy
+                )
             )
+        }
+
+        router.get("/status") { _, _ -> Response in
+            let runtimeStatus = await currentRuntimeStatus()
+
+            return Self.jsonResponse(runtimeStatus)
+        }
+
+        router.get("/asr/status") { _, _ -> Response in
+            let runtimeStatus = await currentRuntimeStatus()
+
+            return Self.jsonResponse(runtimeStatus.asr)
+        }
+
+        router.get("/tts/status") { _, _ -> Response in
+            let runtimeStatus = await currentRuntimeStatus()
+
+            return Self.jsonResponse(runtimeStatus.tts)
+        }
+
+        router.get("/mcp/status") { _, _ -> Response in
+            let runtimeStatus = await currentRuntimeStatus()
+
+            return Self.jsonResponse(runtimeStatus.mcp)
         }
 
         router.get("/models") { _, _ -> Response in
