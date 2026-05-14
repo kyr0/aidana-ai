@@ -38,6 +38,81 @@ export function waitForSelector(
   });
 }
 
+/**
+ * Try to find and click a cookie-consent button on the page.
+ * Searches the main document and all same-origin iframes for <button>
+ * elements whose title attribute or text content contains "Accept",
+ * "Zustimmen", or "Einwilligen". Also matches common cookie-banner
+ * classes like "modalBtnAccept".
+ *
+ * Returns immediately if no button is found within `timeoutMs` (default 1s).
+ */
+export async function acceptCookieBanner(timeoutMs = 1_000): Promise<boolean> {
+  const cookieButtonSelectors = [
+    // Common class selectors
+    'button.modalBtnAccept',
+    // Buttons with cookie-consent keywords in title
+    'button[title*="Accept"]',
+    'button[title*="Zustimmen"]',
+    'button[title*="Einwilligen"]',
+  ];
+  const acceptKeywords = ["accept", "zustimmen", "einwilligen"];
+
+  // Helper: scan a single document for matching buttons
+  function scanDocument(doc: Document): HTMLElement | null {
+    // Try known selectors first
+    for (const s of cookieButtonSelectors) {
+      const el = doc.querySelector(s);
+      if (el instanceof HTMLElement) return el;
+    }
+    // Fallback: scan all buttons by text/title
+    const allButtons = Array.from(doc.querySelectorAll("button"));
+    for (const btn of allButtons) {
+      const text = btn.textContent ?? "";
+      const title = btn.getAttribute("title") ?? "";
+      const combined = `${text} ${title}`.toLowerCase();
+      if (acceptKeywords.some((kw) => combined.includes(kw))) {
+        return btn as HTMLElement;
+      }
+    }
+    return null;
+  }
+
+  // First try: wait for known selectors in the main document
+  const found = await waitForSelector(cookieButtonSelectors, timeoutMs);
+  if (found instanceof HTMLElement) {
+    found.click();
+    return true;
+  }
+
+  // Second try: scan main document by text/title
+  const mainMatch = scanDocument(document);
+  if (mainMatch) {
+    mainMatch.click();
+    return true;
+  }
+
+  // Third try: scan all same-origin iframes
+  const iframes = Array.from(document.querySelectorAll("iframe"));
+  for (const iframe of iframes) {
+    try {
+      // Cross-origin iframes will throw when accessing contentDocument
+      const iframeDoc = iframe.contentDocument;
+      if (iframeDoc) {
+        const match = scanDocument(iframeDoc);
+        if (match) {
+          match.click();
+          return true;
+        }
+      }
+    } catch {
+      // Cross-origin iframe — skip silently
+    }
+  }
+
+  return false;
+}
+
 /** Send a border control message to the MAIN-world preload via postMessage */
 function postBorderAction(action: string): void {
   console.log(`[defuss-tools] posting border action: ${action}`);

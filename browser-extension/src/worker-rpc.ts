@@ -51,6 +51,9 @@ export async function openVoiceAgentWindow(): Promise<VoiceAgentWindowInfo> {
     height: 880,
   });
 
+  if (!createdWindow) {
+    return { ...existing, created: false };
+  }
   return {
     open: true,
     pageUrl: existing.pageUrl,

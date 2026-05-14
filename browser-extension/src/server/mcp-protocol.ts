@@ -1,3 +1,5 @@
+import { cp, mkdir } from "node:fs/promises";
+import { basename, extname } from "node:path";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import {
   CallToolRequestSchema,
@@ -5,7 +7,16 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 import { allMcpTools } from "../mcp-tools.js";
 import type { McpToolMeta } from "../types.js";
-import { fileDelete, fileRead, fileWrite } from "./file-ops.js";
+import {
+  getWorkspacePath,
+  memoryListFiles,
+  memoryFileRead,
+  memoryFileSave,
+  memoryFileArchive,
+  memorySearch,
+  memoryFileAppend,
+  memoryFileMeta,
+} from "./file-ops.js";
 import { doWorkItem } from "./server.js";
 
 export const mcpServerInfo = {
@@ -32,26 +43,217 @@ export function createMcpProtocolServer(): Server {
     const { name, arguments: args } = request.params;
 
     try {
-      if (name === "file_read") {
-        const text = await fileRead((args as any).path);
+      // -- Memory tools --
+      if (name === "memory_list_files") {
+        const tree = await memoryListFiles();
+        return { content: [{ type: "text", text: tree }] };
+      }
+
+      if (name === "memory_file_read") {
+        const text = await memoryFileRead((args as any).name);
         return { content: [{ type: "text", text }] };
       }
 
-      if (name === "file_write") {
-        await fileWrite((args as any).path, (args as any).content);
-        return { content: [{ type: "text", text: "OK" }] };
+      if (name === "memory_file_save") {
+        await memoryFileSave(
+          (args as any).name,
+          (args as any).content,
+          (args as any).fileType ?? "note",
+          (args as any).summary,
+          (args as any).keywords ?? [],
+          (args as any).relatedTo ?? [],
+        );
+        return { content: [{ type: "text", text: `Memory '${(args as any).name}' saved.` }] };
       }
 
-      if (name === "delete_file") {
-        await fileDelete((args as any).path);
-        return { content: [{ type: "text", text: "OK" }] };
+      if (name === "memory_file_archive") {
+        await memoryFileArchive((args as any).name);
+        return { content: [{ type: "text", text: `Memory '${(args as any).name}' archived.` }] };
+      }
+
+      if (name === "memory_search") {
+        const results = await memorySearch((args as any).keywords ?? []);
+        return { content: [{ type: "text", text: results }] };
+      }
+
+      if (name === "memory_file_append") {
+        await memoryFileAppend((args as any).name, (args as any).content);
+        return { content: [{ type: "text", text: `Appended to memory '${(args as any).name}'.` }] };
+      }
+
+      if (name === "memory_file_meta") {
+        const meta = await memoryFileMeta((args as any).name);
+        return { content: [{ type: "text", text: meta }] };
       }
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
       return {
-        content: [{ type: "text", text: `File tool error: ${message}` }],
+        content: [{ type: "text", text: `Memory tool error: ${message}` }],
         isError: true,
       };
+    }
+
+    // -- Scrape tool (with Defuddle processing) --
+    if (name === "scrape") {
+      try {
+        // Normalize URL: ensure it has a protocol
+        let url: string;
+        try {
+          url = new URL((args as any).url).toString();
+        } catch {
+          // If URL constructor fails (e.g. "spiegel.de"), prepend https://
+          url = new URL(`https://${(args as any).url}`).toString();
+        }
+        const format = (args as any).format ?? "html";
+        const debug = (args as any).debug ?? false;
+        const closeTab = (args as any).closeTab ?? true;
+
+        // Get raw HTML via browser automation
+        const item = await doWorkItem({
+          type: "scrape",
+          payload: { url },
+          options: { focusAutomation: true, closeTab },
+        });
+
+        // Process with Defuddle (all formats go through for cleanup)
+        const { parseHTML } = await import("linkedom");
+        const { Defuddle } = await import("defuddle/node");
+        const { document } = parseHTML(item.result);
+        const result = await Defuddle(document, url, {
+          markdown: format === "md",
+          debug,
+        });
+
+        // Build metadata
+        const metadata: Record<string, unknown> = {
+          title: result.title ?? "",
+          url,
+        };
+        if (result.author) metadata.author = result.author;
+        if (result.language) metadata.language = result.language;
+        if (result.published) metadata.published = result.published;
+        if (result.wordCount) metadata.wordCount = result.wordCount;
+
+        // Only include metaTags if schemaOrgData is NOT present
+        if (result.metaTags && !result.schemaOrgData) {
+          const wantedNames = new Set([
+            "author",
+            "email",
+            "fb:page_id",
+            "twitter:account_id",
+            "locale",
+            "og:image",
+            "og:description",
+            "og:title",
+          ]);
+          const filtered = (result.metaTags as Array<{ name?: string; content?: string }>)
+            .filter((tag) => tag.name && wantedNames.has(tag.name))
+            .map((tag) => ({ name: tag.name!, content: tag.content ?? "" }));
+          if (filtered.length > 0) {
+            metadata.metaTags = filtered;
+          }
+        }
+
+        if (result.schemaOrgData) metadata.schemaOrgData = result.schemaOrgData;
+        if (debug && result.debug) metadata.debug = result.debug;
+
+        if (format === "md") {
+          const content = result.contentMarkdown ?? result.content;
+          return { content: [{ type: "text", text: JSON.stringify({ content_type: "md", metadata, content }, null, 2) }] };
+        }
+
+        if (format === "json") {
+          return { content: [{ type: "text", text: JSON.stringify({ content_type: "json", metadata, content: result.content }, null, 2) }] };
+        }
+
+        // format === "html" — cleaned HTML with metadata
+        return { content: [{ type: "text", text: JSON.stringify({ content_type: "html", metadata, content: result.content }, null, 2) }] };
+      } catch (err: unknown) {
+        const message = err instanceof Error ? err.message : String(err);
+        return {
+          content: [{ type: "text", text: `Scrape error: ${message}` }],
+          isError: true,
+        };
+      }
+    }
+
+    // -- Download file tool --
+    if (name === "download_file") {
+      try {
+        const url = (args as any).url;
+        const fileName = (args as any).fileName;
+
+        // Download via browser extension
+        const item = await doWorkItem({
+          type: "download_file",
+          payload: { url, fileName },
+          options: { focusAutomation: false, closeTab: false },
+        });
+
+        const downloadResult = item.result as {
+          path: string;
+          url: string;
+          finalUrl?: string;
+          bytesReceived: number;
+          totalBytes: number;
+        };
+
+        // Move file into workspace/downloads/
+        const workspacePath = getWorkspacePath();
+        const downloadsDir = `${workspacePath}/downloads`;
+        await mkdir(downloadsDir, { recursive: true });
+
+        // Determine destination filename
+        let destName: string;
+        if (fileName) {
+          destName = fileName;
+        } else {
+          // Extract from finalUrl or original URL
+          const sourceUrl = downloadResult.finalUrl ?? downloadResult.url;
+          destName = basename(sourceUrl.split("?")[0]);
+        }
+
+        // If no extension, try to infer from URL
+        if (!extname(destName)) {
+          const sourceUrl = downloadResult.finalUrl ?? downloadResult.url;
+          const ext = extname(sourceUrl.split("?")[0]);
+          if (ext) destName += ext;
+          else destName += ".bin";
+        }
+
+        const destPath = `${downloadsDir}/${destName}`;
+
+        // Copy from Chrome downloads to workspace
+        await cp(downloadResult.path, destPath);
+
+        const relativePath = `./downloads/${destName}`;
+
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify(
+                {
+                  content_type: "download",
+                  localPath: relativePath,
+                  fileName: destName,
+                  bytesReceived: downloadResult.bytesReceived,
+                  totalBytes: downloadResult.totalBytes,
+                  sourceUrl: downloadResult.url,
+                },
+                null,
+                2,
+              ),
+            },
+          ],
+        };
+      } catch (err: unknown) {
+        const message = err instanceof Error ? err.message : String(err);
+        return {
+          content: [{ type: "text", text: `Download error: ${message}` }],
+          isError: true,
+        };
+      }
     }
 
     const meta = toolsByName.get(name);

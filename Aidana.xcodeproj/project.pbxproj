@@ -22,6 +22,7 @@
 		AA0000010000000000200006 /* LogStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000010000000000100006 /* LogStore.swift */; };
 		AA0000010000000000200007 /* LogView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000010000000000100007 /* LogView.swift */; };
 		AA0000010000000000200008 /* ASRTestClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000010000000000100008 /* ASRTestClient.swift */; };
+		AA000001000000000020000C /* MCPToolsViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA000001000000000010000C /* MCPToolsViewModel.swift */; };
 		AA0000010000000000200009 /* reference.wav in Resources */ = {isa = PBXBuildFile; fileRef = AA0000010000000000100009 /* reference.wav */; };
 		AA0000010000000000600001 /* Hummingbird in Frameworks */ = {isa = PBXBuildFile; productRef = AA0000010000000000500001 /* Hummingbird */; };
 		AA0000010000000000600002 /* HummingbirdWebSocket in Frameworks */ = {isa = PBXBuildFile; productRef = AA0000010000000000500002 /* HummingbirdWebSocket */; };
@@ -44,6 +45,7 @@
 		AA0000010000000000100006 /* LogStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LogStore.swift; sourceTree = "<group>"; };
 		AA0000010000000000100007 /* LogView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LogView.swift; sourceTree = "<group>"; };
 		AA0000010000000000100008 /* ASRTestClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ASRTestClient.swift; sourceTree = "<group>"; };
+		AA000001000000000010000C /* MCPToolsViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MCPToolsViewModel.swift; sourceTree = "<group>"; };
 		AA0000010000000000100009 /* reference.wav */ = {isa = PBXFileReference; lastKnownFileType = audio.wav; path = ../reference.wav; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -184,6 +186,7 @@
 			children = (
 				AA0000010000000000100006 /* LogStore.swift */,
 				AA0000010000000000100008 /* ASRTestClient.swift */,
+				AA000001000000000010000C /* MCPToolsViewModel.swift */,
 			);
 			path = Support;
 			sourceTree = "<group>";
@@ -283,6 +286,7 @@
 				AA0000010000000000200006 /* LogStore.swift in Sources */,
 				AA0000010000000000200007 /* LogView.swift in Sources */,
 				AA0000010000000000200008 /* ASRTestClient.swift in Sources */,
+				AA000001000000000020000C /* MCPToolsViewModel.swift in Sources */,
 				AA000001000000000020000A /* TTSServer.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

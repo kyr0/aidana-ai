@@ -44,7 +44,8 @@
     "offscreen",
     "alarms",
     "cookies",
-    "browsingData"
+    "browsingData",
+    "downloads"
   ],
   "background": {
     "service_worker": "src/worker.ts",

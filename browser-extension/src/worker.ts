@@ -5,6 +5,8 @@ import { openVoiceAgentWindow, WorkerRpc } from "./worker-rpc";
 import { WorkItemScheduler } from "./lib/worker/work-item-scheduler";
 import { GoogleSearchWorkerTool } from "./tools/google-search";
 import { ArztSucheWorkerTool } from "./tools/116117-arztsuche";
+import { ScrapeWorkerTool } from "./tools/scrape";
+import { DownloadFileWorkerTool } from "./tools/download-file";
 import { startKeepalive } from "./lib/worker/keepalive";
 import { getValue } from "./lib/worker/prefs";
 import { getServerRpc } from "./lib/worker/server-rpc";
@@ -28,6 +30,8 @@ chrome.action.onClicked.addListener(async () => {
 const scheduler = new WorkItemScheduler();
 scheduler.register(GoogleSearchWorkerTool);
 scheduler.register(ArztSucheWorkerTool);
+scheduler.register(ScrapeWorkerTool);
+scheduler.register(DownloadFileWorkerTool);
 scheduler.start(config.serverTaskPollingIntervalMs);
 
 // Sync persisted workspace path to the server (best-effort)

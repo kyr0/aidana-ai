@@ -20,6 +20,8 @@
     "@incremark/core": "^1.0.2",
     "@met4citizen/talkinghead": "^1.7.0",
     "@modelcontextprotocol/sdk": "^1.29.0",
+    "defuddle": "^0.18.1",
+    "linkedom": "^0.18.12",
     "@tailwindcss/vite": "^4.1.18",
     "defuss": "^3.4.1",
     "defuss-db": "^1.1.4",

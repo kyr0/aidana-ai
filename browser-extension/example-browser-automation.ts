@@ -31,6 +31,6 @@ const result = await doWorkItem<GoogleSearchPayload, GoogleSearchResult>({
 });
 console.log("[example] doWorkItem result:", result.result);
 
-await server.stop(false);
+await server.stop();
 
 process.exit(0);

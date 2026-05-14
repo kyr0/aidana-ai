@@ -7,6 +7,10 @@
 import { registerContentScriptTool } from "./lib/content-script/tool-registry";
 import { GoogleSearchContentScriptTool } from "./tools/google-search";
 import { ArztSucheContentScriptTool } from "./tools/116117-arztsuche";
+import { ScrapeContentScriptTool } from "./tools/scrape";
+import { DownloadFileContentScriptTool } from "./tools/download-file";
 
 registerContentScriptTool(GoogleSearchContentScriptTool);
 registerContentScriptTool(ArztSucheContentScriptTool);
+registerContentScriptTool(ScrapeContentScriptTool);
+registerContentScriptTool(DownloadFileContentScriptTool);

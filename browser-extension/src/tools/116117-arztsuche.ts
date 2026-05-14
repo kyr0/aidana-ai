@@ -1,4 +1,5 @@
 import {
+  acceptCookieBanner,
   waitForSelector,
   waitForDomStable,
   showErrorBorder,
@@ -12,6 +13,7 @@ import {
   waitForContentScript,
   clearCookies,
   clearStorage,
+  createWebTab,
 } from "../lib/worker/tools";
 import type { WorkItem, WorkItemResult, McpToolMeta } from "../types";
 import type { WorkItemTool } from "../lib/worker/work-item-scheduler";
@@ -76,18 +78,8 @@ export const ArztSucheWorkerTool: WorkItemTool<
       await clearStorage("https://arztsuche.116117.de");
 
       const focusTab = item.options?.focusAutomation ?? true;
-      const tab = await chrome.tabs.create({ url, active: focusTab });
-      tabId = tab.id;
-
-      if (tabId === undefined) {
-        return {
-          success: false,
-          error: {
-            name: "TabError",
-            message: "chrome.tabs.create returned no tab ID",
-          },
-        };
-      }
+      const { tabId: newTabId } = await createWebTab(url, focusTab);
+      tabId = newTabId;
 
       await waitForTabLoad(tabId);
 
@@ -132,6 +124,9 @@ async function executeArztSuche(
 ): Promise<WorkItemResult<ArztSucheResult>> {
   try {
     await showAutomationBorder();
+
+    // Try to dismiss cookie consent banners
+    await acceptCookieBanner();
 
     // 1. Wait for the Angular app to fully bootstrap and stabilise
     await waitForSelector(["#app"], 15_000);

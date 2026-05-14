@@ -119,15 +119,11 @@ Commands:
 ```bash
 make setup
 make build
-make start
-```
-
-Useful targets:
-
-```bash
-make stop
+make start # builds the project and starts the app, and also MCP server, TTS, ASR server
 make restart
-make clean
+make test
+make test-mcp # runs a test client against the embedded MCP server
+make stop
 ```
 
 Open the project in Xcode if you want to run or debug it there:
@@ -194,6 +190,11 @@ ASR logs also include built-in test actions:
 
 - **Direct Test** to run a local transcription through the loaded ASR model
 - **WS Test** to send test audio through the WebSocket server path
+
+The **MCP** tab contains two sub-tabs:
+
+- **Logs** — streaming log output from the embedded MCP sidecar
+- **Tools** — lists all tools registered with the MCP server (fetched via `tools/list`). Shows each tool's name and description, with a Refresh button to reload the list. The tools list is automatically fetched when the MCP server becomes ready.
 
 ## Test Clients
 
