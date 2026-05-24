@@ -368,6 +368,7 @@ private struct TTSPreferencesTab: View {
 private struct MCPPreferencesTab: View {
     @ObservedObject var preferences: PreferencesStore
     @ObservedObject var serverState: ServerState
+    @State private var showCopiedFeedback = false
 
     var body: some View {
         ScrollView {
@@ -483,9 +484,96 @@ private struct MCPPreferencesTab: View {
                     .padding(8)
                 }
 
+                // Client Configuration JSON
+                GroupBox("Client Configuration") {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Paste this JSON into another MCP client's configuration to connect to this server via HTTP.")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+
+                        ZStack(alignment: .topTrailing) {
+                            TextEditor(text: mcpClientConfigJSON)
+                                .font(.system(.callout, design: .monospaced))
+                                .frame(minHeight: 120)
+                                .overlay(
+                                    Rectangle()
+                                        .fill(Color.clear)
+                                        .contentShape(Rectangle()),
+                                    alignment: .top
+                                )
+
+                            Button {
+                                copyConfigToClipboard()
+                            } label: {
+                                Image(systemName: "doc.on.doc")
+                            }
+                            .buttonStyle(.borderless)
+                            .padding(4)
+                        }
+
+                        HStack {
+                            if showCopiedFeedback {
+                                Text("Copied!")
+                                    .font(.caption)
+                                    .foregroundColor(.green)
+                            }
+                            Spacer()
+                        }
+                    }
+                    .padding(8)
+                }
+
                 Spacer()
             }
             .padding(24)
+        }
+    }
+
+    private var mcpClientConfigJSON: Binding<String> {
+        Binding(
+            get: {
+                let endpoint = "http://127.0.0.1:\(preferences.mcpPort)/mcp"
+                return """
+                {
+                  "mcpServers": {
+                    "aidana": {
+                      "type": "streamable-http",
+                      "url": "\(endpoint)",
+                      "timeout": 30,
+                      "headers": {
+                        "X-Aidana-Workspace": "/path/to/workspace"
+                      }
+                    }
+                  }
+                }
+                """
+            },
+            set: { _ in /* Read-only */ }
+        )
+    }
+
+    private func copyConfigToClipboard() {
+        let endpoint = "http://127.0.0.1:\(preferences.mcpPort)/mcp"
+        let json = """
+        {
+          "mcpServers": {
+            "aidana": {
+              "type": "streamable-http",
+              "url": "\(endpoint)",
+              "timeout": 30,
+              "headers": {
+                "X-Aidana-Workspace": "/path/to/workspace"
+              }
+            }
+          }
+        }
+        """
+        let pasteboard = NSPasteboard.general
+        pasteboard.declareTypes([.string], owner: nil)
+        pasteboard.setString(json, forType: .string)
+        showCopiedFeedback = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+            showCopiedFeedback = false
         }
     }
 

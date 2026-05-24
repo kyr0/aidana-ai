@@ -17,6 +17,7 @@ console.log = console.error;
 import { randomUUID } from "node:crypto";
 import type { Server as NodeHttpServer } from "node:http";
 import { createMcpExpressApp } from "@modelcontextprotocol/sdk/server/express.js";
+import { resolve } from "node:path";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
@@ -118,6 +119,13 @@ async function startHttpTransport(): Promise<void> {
 
   app.all(runtimeConfig.mcpPath, async (req: HttpRouteRequest, res: HttpRouteResponse) => {
     try {
+      // Support X-Aidana-Workspace header to override workspace path per-request
+      const workspaceHeader = firstHeaderValue(req.headers["x-aidana-workspace"]);
+      if (workspaceHeader) {
+        const { setWorkspacePath } = await import("./src/server/file-ops.js");
+        setWorkspacePath(resolve(workspaceHeader));
+      }
+
       const headerSessionId = firstHeaderValue(req.headers["mcp-session-id"]);
       let session = headerSessionId ? httpSessions.get(headerSessionId) : undefined;
 

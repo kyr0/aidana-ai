@@ -53,12 +53,12 @@ function pickAidanaServerEntry(
   }
 
   const preferredEntry = entries.aidana;
-  if ((preferredEntry?.transport === "streamable-http" || preferredEntry?.type === "http") && preferredEntry.url) {
+  if ((preferredEntry?.transport === "streamable-http" || preferredEntry?.type === "streamable-http" || preferredEntry?.type === "http") && preferredEntry.url) {
     return { name: "aidana", entry: preferredEntry };
   }
 
   for (const [name, entry] of Object.entries(entries)) {
-    if ((entry.transport === "streamable-http" || entry.type === "http") && entry.url) {
+    if ((entry.transport === "streamable-http" || entry.type === "streamable-http" || entry.type === "http") && entry.url) {
       return { name, entry };
     }
   }

@@ -33,9 +33,8 @@ actor MCPServer {
     }
 
     private struct ClientConfigurationEntry: Encodable {
-        let transport: String
+        let type: String
         let url: URL
-        let enabled: Bool
         let timeout: Int
     }
 
@@ -273,9 +272,8 @@ actor MCPServer {
 
     private func defaultClientConfigurationData(configuration: LaunchConfiguration) throws -> Data {
         let entry = ClientConfigurationEntry(
-            transport: "streamable-http",
+            type: "streamable-http",
             url: mcpEndpointURL(port: configuration.mcpPort),
-            enabled: true,
             timeout: 30
         )
         let config = ClientConfigurationFile(
