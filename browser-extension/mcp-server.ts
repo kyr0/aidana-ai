@@ -17,12 +17,10 @@ console.log = console.error;
 import { randomUUID } from "node:crypto";
 import type { Server as NodeHttpServer } from "node:http";
 import { createMcpExpressApp } from "@modelcontextprotocol/sdk/server/express.js";
-import { resolve } from "node:path";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
-
 import { createMcpProtocolServer } from "./src/server/mcp-protocol.js";
 import { runtimeConfig } from "./src/server/runtime-config.js";
 import { server as workQueueServer } from "./src/server/server.js";
@@ -118,68 +116,73 @@ async function startHttpTransport(): Promise<void> {
   });
 
   app.all(runtimeConfig.mcpPath, async (req: HttpRouteRequest, res: HttpRouteResponse) => {
-    try {
-      // Support X-Aidana-Workspace header to override workspace path per-request
-      const workspaceHeader = firstHeaderValue(req.headers["x-aidana-workspace"]);
-      if (workspaceHeader) {
-        const { setWorkspacePath } = await import("./src/server/file-ops.js");
-        setWorkspacePath(resolve(workspaceHeader));
-      }
+    const handler = async () => {
+      try {
+        const headerSessionId = firstHeaderValue(req.headers["mcp-session-id"]);
+        let session = headerSessionId ? httpSessions.get(headerSessionId) : undefined;
 
-      const headerSessionId = firstHeaderValue(req.headers["mcp-session-id"]);
-      let session = headerSessionId ? httpSessions.get(headerSessionId) : undefined;
+        if (!session && req.method === "POST" && isInitializeRequest(req.body)) {
+          const transport = new StreamableHTTPServerTransport({
+            sessionIdGenerator: () => randomUUID(),
+            onsessioninitialized: (sessionId) => {
+              if (session) {
+                httpSessions.set(sessionId, session);
+              }
+            },
+          });
 
-      if (!session && req.method === "POST" && isInitializeRequest(req.body)) {
-        const transport = new StreamableHTTPServerTransport({
-          sessionIdGenerator: () => randomUUID(),
-          onsessioninitialized: (sessionId) => {
-            if (session) {
-              httpSessions.set(sessionId, session);
+          transport.onclose = () => {
+            const sessionId = transport.sessionId;
+            if (sessionId) {
+              httpSessions.delete(sessionId);
             }
-          },
-        });
+          };
 
-        transport.onclose = () => {
-          const sessionId = transport.sessionId;
-          if (sessionId) {
-            httpSessions.delete(sessionId);
-          }
-        };
+          const server = createMcpProtocolServer();
+          session = { server, transport };
+          await server.connect(transport);
+        }
 
-        const server = createMcpProtocolServer();
-        session = { server, transport };
-        await server.connect(transport);
+        if (!session) {
+          res.status(400).json({
+            jsonrpc: "2.0",
+            error: {
+              code: -32000,
+              message: "Bad Request: No valid MCP session was provided",
+            },
+            id: null,
+          });
+          return;
+        }
+
+        await session.transport.handleRequest(
+          req as unknown as HttpTransportRequest,
+          res as unknown as HttpTransportResponse,
+          req.body,
+        );
+      } catch (error) {
+        console.error("[mcp] failed to handle HTTP request", error);
+        if (!res.headersSent) {
+          res.status(500).json({
+            jsonrpc: "2.0",
+            error: {
+              code: -32603,
+              message: "Internal server error",
+            },
+            id: null,
+          });
+        }
       }
+    };
 
-      if (!session) {
-        res.status(400).json({
-          jsonrpc: "2.0",
-          error: {
-            code: -32000,
-            message: "Bad Request: No valid MCP session was provided",
-          },
-          id: null,
-        });
-        return;
-      }
-
-      await session.transport.handleRequest(
-        req as unknown as HttpTransportRequest,
-        res as unknown as HttpTransportResponse,
-        req.body,
-      );
-    } catch (error) {
-      console.error("[mcp] failed to handle HTTP request", error);
-      if (!res.headersSent) {
-        res.status(500).json({
-          jsonrpc: "2.0",
-          error: {
-            code: -32603,
-            message: "Internal server error",
-          },
-          id: null,
-        });
-      }
+    // Support X-Aidana-Workspace header to override workspace path per-request
+    // using AsyncLocalStorage for proper per-session isolation
+    const workspaceHeader = firstHeaderValue(req.headers["x-aidana-workspace"]);
+    if (workspaceHeader) {
+      const { withWorkspacePath } = await import("./src/server/file-ops.js");
+      await withWorkspacePath(workspaceHeader, handler);
+    } else {
+      await handler();
     }
   });
 

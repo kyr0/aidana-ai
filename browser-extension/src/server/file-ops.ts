@@ -1,21 +1,30 @@
 import { access, mkdir, readdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
+import { AsyncLocalStorage } from "node:async_hooks";
 import { dirname, normalize, resolve, sep } from "node:path";
 import { runtimeConfig } from "./runtime-config.js";
 
-/** Mutable workspace root — can be updated at runtime via setWorkspacePath */
-let workspacePath = runtimeConfig.workspacePath;
+/** Global default workspace — updated by setWorkspacePath (non-async-context path) */
+let globalWorkspacePath = runtimeConfig.workspacePath;
+
+/** Per-async-context workspace overrides (e.g. per HTTP request via X-Aidana-Workspace) */
+const workspaceStore = new AsyncLocalStorage<string>();
 
 export function getWorkspacePath(): string {
-  return workspacePath;
+  return workspaceStore.getStore() ?? globalWorkspacePath;
 }
 
 export function setWorkspacePath(newPath: string): void {
-  workspacePath = resolve(newPath);
+  globalWorkspacePath = resolve(newPath);
   console.log(`[file-ops] workspace path set to: ${newPath}`);
 }
 
+/** Run an async callback with a per-context workspace override. */
+export async function withWorkspacePath<T>(path: string, fn: () => Promise<T>): Promise<T> {
+  return workspaceStore.run(resolve(path), fn);
+}
+
 export async function ensureWorkspacePathExists(): Promise<void> {
-  await mkdir(workspacePath, { recursive: true });
+  await mkdir(globalWorkspacePath, { recursive: true });
 }
 
 /** Resolve a relative path against the workspace root, rejecting traversal. */
