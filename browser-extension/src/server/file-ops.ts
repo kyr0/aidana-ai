@@ -29,7 +29,7 @@ export async function ensureWorkspacePathExists(): Promise<void> {
 
 /** Resolve a relative path against the workspace root, rejecting traversal. */
 function safePath(relativePath: string): string {
-  const root = workspacePath;
+  const root = getWorkspacePath();
   const resolved = resolve(root, relativePath);
   const normalizedRoot = normalize(resolve(root));
   const normalizedResolved = normalize(resolved);

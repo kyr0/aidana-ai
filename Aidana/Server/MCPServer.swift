@@ -274,7 +274,7 @@ actor MCPServer {
         let entry = ClientConfigurationEntry(
             type: "streamable-http",
             url: mcpEndpointURL(port: configuration.mcpPort),
-            timeout: 30
+            timeout: 90
         )
         let config = ClientConfigurationFile(
             mcpServers: [defaultClientConfigServerName: entry]

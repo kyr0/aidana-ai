@@ -7,7 +7,7 @@ BUILD_DIR = $(shell xcodebuild -project $(PROJECT) -scheme $(SCHEME) -configurat
 APP_PATH = $(BUILD_DIR)/$(APP_NAME).app
 BINARY = $(APP_PATH)/Contents/MacOS/$(APP_NAME)
 
-.PHONY: build start stop restart log clean setup test-mcp
+.PHONY: build start stop restart log clean setup test-mcp test
 
 build:
 	xcodebuild -project $(PROJECT) -scheme $(SCHEME) -configuration $(CONFIG) build
@@ -15,7 +15,8 @@ build:
 
 start: build stop
 	@echo "Starting app bundle: $(APP_PATH)"
-	$(BINARY) &
+	@nohup $(BINARY) > /dev/null 2>&1 & \
+	disown && echo "App started in background"
 
 stop:
 	@pgrep -f 'Aidana.app/Contents/MacOS/Aidana' | xargs kill -9 2>/dev/null || true
@@ -35,3 +36,8 @@ setup:
 test-mcp:
 	@echo "Running MCP test against the existing Aidana/MCP setup (server and extension assumed started)"
 	cd $(BROWSER_EXTENSION_DIR) && bun run test:mcp
+
+test: restart
+	@echo "Running all MCP integration tests"
+	cd $(BROWSER_EXTENSION_DIR) && bun run test:mcp
+	cd mcp_tests && bun run test-web-search.ts

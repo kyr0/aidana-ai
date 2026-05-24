@@ -539,7 +539,7 @@ private struct MCPPreferencesTab: View {
                     "aidana": {
                       "type": "streamable-http",
                       "url": "\(endpoint)",
-                      "timeout": 30,
+                      "timeout": 90,
                       "headers": {
                         "X-Aidana-Workspace": "/path/to/workspace"
                       }
@@ -560,7 +560,7 @@ private struct MCPPreferencesTab: View {
             "aidana": {
               "type": "streamable-http",
               "url": "\(endpoint)",
-              "timeout": 30,
+              "timeout": 90,
               "headers": {
                 "X-Aidana-Workspace": "/path/to/workspace"
               }

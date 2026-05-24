@@ -338,6 +338,104 @@ export function createMcpProtocolServer(): Server {
       }
     }
 
+    // -- Web Search (aggregate: google_search + sequential scrapes) --
+    if (name === "web_search") {
+      try {
+        const query = (args as any).query;
+        const topK = (args as any).topK ?? 3;
+        const format = (args as any).format ?? "md";
+        const closeTab = (args as any).closeTab ?? true;
+
+        // Helper: wrap promise with a timeout (ms)
+        const withTimeout = (ms: number, promise: Promise<unknown>) => {
+          let timer: ReturnType<typeof setTimeout>;
+          const timeoutPromise = new Promise<never>((_, reject) => {
+            timer = setTimeout(() => {
+              reject(new Error(`Timeout after ${ms}ms`));
+            }, ms);
+          });
+          return Promise.race([promise, timeoutPromise]).finally(() => clearTimeout(timer));
+        };
+
+        // Step 1: Google search to get links (45s timeout)
+        const searchItem = (await withTimeout(
+          45_000,
+          doWorkItem({
+            type: "google_search",
+            payload: { query, topK },
+            options: { focusAutomation: true, closeTab },
+          }),
+        )) as { result?: { links?: Array<{ title: string; url: string }> } };
+
+        const rawLinks = searchItem?.result?.links;
+        const links: Array<{ title: string; url: string }> = Array.isArray(rawLinks) ? rawLinks : [];
+
+        if (links.length === 0) {
+          return {
+            content: [{ type: "text", text: JSON.stringify({ query, results: [], errors: [{ error: "No search results found" }] }, null, 2) }],
+          };
+        }
+
+        // Step 2: Scrape each link sequentially (each opens/closes its own tab)
+        // 45s timeout per scrape with one retry on timeout
+        const results: Array<{ title: string; url: string; content: string }> = [];
+        const errors: Array<{ url: string; error: string }> = [];
+
+        for (let i = 0; i < links.length; i++) {
+          const link = links[i];
+          try {
+            const scrapeItem = (await withTimeout(
+              45_000,
+              doWorkItem({
+                type: "scrape",
+                payload: { url: link.url, format },
+                options: { focusAutomation: true, closeTab: true },
+              }),
+            )) as { result?: string };
+            results.push({
+              title: link.title,
+              url: link.url,
+              content: scrapeItem?.result ?? "",
+            });
+          } catch (err: unknown) {
+            // First attempt failed (likely timeout), retry once
+            try {
+              const scrapeItem = (await withTimeout(
+                45_000,
+                doWorkItem({
+                  type: "scrape",
+                  payload: { url: link.url, format },
+                  options: { focusAutomation: true, closeTab: true },
+                }),
+              )) as { result?: string };
+              results.push({
+                title: link.title,
+                url: link.url,
+                content: scrapeItem?.result ?? "",
+              });
+            } catch (retryErr: unknown) {
+              const message = err instanceof Error ? err.message : String(err);
+              errors.push({ url: link.url, error: message });
+            }
+          }
+        }
+
+        const output = {
+          query,
+          results,
+          errors,
+        };
+
+        return { content: [{ type: "text", text: JSON.stringify(output, null, 2) }] };
+      } catch (err: unknown) {
+        const message = err instanceof Error ? err.message : String(err);
+        return {
+          content: [{ type: "text", text: `Web search error: ${message}` }],
+          isError: true,
+        };
+      }
+    }
+
     // -- ChatGPT (long-running, no retry) --
     if (name === "chatgpt") {
       try {
