@@ -8,7 +8,7 @@
  *
  * Run with: bun run test:doctor-search
  */
-import { createExampleMcpSession } from "./example-mcp-client.js";
+import { createExampleMcpSession } from "./mcp-client.js";
 
 const session = await createExampleMcpSession("example-mcp-doctor-search");
 

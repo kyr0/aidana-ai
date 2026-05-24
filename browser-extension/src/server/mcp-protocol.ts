@@ -256,6 +256,109 @@ export function createMcpProtocolServer(): Server {
       }
     }
 
+    // -- Google Maps (no retry) --
+    if (name === "google_maps") {
+      try {
+        const item = await doWorkItem({
+          type: "google_maps",
+          payload: { query: (args as any).query },
+          options: { focusAutomation: true, closeTab: true, retry: false },
+        });
+        return { content: [{ type: "text", text: JSON.stringify(item.result, null, 2) }] };
+      } catch (err: unknown) {
+        const message = err instanceof Error ? err.message : String(err);
+        return {
+          content: [{ type: "text", text: `Google Maps error: ${message}` }],
+          isError: true,
+        };
+      }
+    }
+
+    // -- Consensus (no retry) --
+    if (name === "consensus") {
+      try {
+        const item = await doWorkItem({
+          type: "consensus",
+          payload: { query: (args as any).query },
+          options: { focusAutomation: true, closeTab: true, retry: false },
+        });
+        return { content: [{ type: "text", text: JSON.stringify(item.result, null, 2) }] };
+      } catch (err: unknown) {
+        const message = err instanceof Error ? err.message : String(err);
+        return {
+          content: [{ type: "text", text: `Consensus error: ${message}` }],
+          isError: true,
+        };
+      }
+    }
+
+    // -- Google Search (process kpHtml → info with Defuddle) --
+    if (name === "google_search") {
+      try {
+        const item = await doWorkItem({
+          type: "google_search",
+          payload: {
+            query: (args as any).query,
+            topK: (args as any).topK,
+            aiSummary: (args as any).aiSummary,
+          },
+          options: { focusAutomation: true, closeTab: true },
+        });
+
+        const raw = item.result as {
+          links?: unknown[];
+          aiSummary?: string;
+          kpHtml?: string;
+          weather?: string;
+          travelInfo?: string;
+        };
+        const output: Record<string, unknown> = { links: raw.links ?? [] };
+        if (raw.aiSummary) output.aiSummary = raw.aiSummary;
+
+        // Helper: process raw HTML fragment through Defuddle → markdown
+        const processHtml = async (html: string) => {
+          const { parseHTML } = await import("linkedom");
+          const { Defuddle } = await import("defuddle/node");
+          const { document } = parseHTML("<html><body>" + html + "</body></html>");
+          const defuddle = await Defuddle(document, "", { markdown: true });
+          return defuddle.content ?? "";
+        };
+
+        if (raw.kpHtml) output.info = await processHtml(raw.kpHtml);
+        if (raw.weather) output.weather = await processHtml(raw.weather);
+        if (raw.travelInfo) output.travelInfo = await processHtml(raw.travelInfo);
+
+        return { content: [{ type: "text", text: JSON.stringify(output, null, 2) }] };
+      } catch (err: unknown) {
+        const message = err instanceof Error ? err.message : String(err);
+        return {
+          content: [{ type: "text", text: `Google search error: ${message}` }],
+          isError: true,
+        };
+      }
+    }
+
+    // -- ChatGPT (long-running, no retry) --
+    if (name === "chatgpt") {
+      try {
+        const item = await doWorkItem({
+          type: "chatgpt",
+          payload: {
+            prompt: (args as any).prompt,
+            timeoutMs: (args as any).timeoutMs,
+          },
+          options: { focusAutomation: true, closeTab: true, retry: false },
+        });
+        return { content: [{ type: "text", text: item.result }] };
+      } catch (err: unknown) {
+        const message = err instanceof Error ? err.message : String(err);
+        return {
+          content: [{ type: "text", text: `ChatGPT error: ${message}` }],
+          isError: true,
+        };
+      }
+    }
+
     const meta = toolsByName.get(name);
     if (!meta) {
       return {

@@ -7,6 +7,9 @@ import { GoogleSearchWorkerTool } from "./tools/google-search";
 import { ArztSucheWorkerTool } from "./tools/116117-arztsuche";
 import { ScrapeWorkerTool } from "./tools/scrape";
 import { DownloadFileWorkerTool } from "./tools/download-file";
+import { ChatGPTWorkerTool } from "./tools/chatgpt";
+import { GoogleMapsWorkerTool } from "./tools/google-maps";
+import { ConsensusWorkerTool } from "./tools/consensus";
 import { startKeepalive } from "./lib/worker/keepalive";
 import { getValue } from "./lib/worker/prefs";
 import { getServerRpc } from "./lib/worker/server-rpc";
@@ -32,6 +35,9 @@ scheduler.register(GoogleSearchWorkerTool);
 scheduler.register(ArztSucheWorkerTool);
 scheduler.register(ScrapeWorkerTool);
 scheduler.register(DownloadFileWorkerTool);
+scheduler.register(ChatGPTWorkerTool);
+scheduler.register(GoogleMapsWorkerTool);
+scheduler.register(ConsensusWorkerTool);
 scheduler.start(config.serverTaskPollingIntervalMs);
 
 // Sync persisted workspace path to the server (best-effort)

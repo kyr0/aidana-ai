@@ -1,6 +1,6 @@
 import { access, readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
-import { createExampleMcpSession } from "./example-mcp-client.js";
+import { createExampleMcpSession } from "./mcp-client.js";
 
 const session = await createExampleMcpSession("aidana-test-mcp");
 

@@ -9,8 +9,17 @@ import { GoogleSearchContentScriptTool } from "./tools/google-search";
 import { ArztSucheContentScriptTool } from "./tools/116117-arztsuche";
 import { ScrapeContentScriptTool } from "./tools/scrape";
 import { DownloadFileContentScriptTool } from "./tools/download-file";
+import { ChatGPTSendContentScriptTool, ChatGPTExtractContentScriptTool } from "./tools/chatgpt";
+import { GoogleMapsSendContentScriptTool, GoogleMapsExtractContentScriptTool } from "./tools/google-maps";
+import { ConsensusSendContentScriptTool, ConsensusExtractContentScriptTool } from "./tools/consensus";
 
 registerContentScriptTool(GoogleSearchContentScriptTool);
+registerContentScriptTool(GoogleMapsSendContentScriptTool);
+registerContentScriptTool(GoogleMapsExtractContentScriptTool);
 registerContentScriptTool(ArztSucheContentScriptTool);
 registerContentScriptTool(ScrapeContentScriptTool);
 registerContentScriptTool(DownloadFileContentScriptTool);
+registerContentScriptTool(ChatGPTSendContentScriptTool);
+registerContentScriptTool(ChatGPTExtractContentScriptTool);
+registerContentScriptTool(ConsensusSendContentScriptTool);
+registerContentScriptTool(ConsensusExtractContentScriptTool);

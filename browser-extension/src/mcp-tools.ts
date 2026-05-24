@@ -3,6 +3,9 @@ import { mcpMeta as googleSearch } from "./tools/google-search.js";
 import { mcpMeta as arztSuche } from "./tools/116117-arztsuche.js";
 import { mcpMeta as scrape } from "./tools/scrape.js";
 import { mcpMeta as downloadFile } from "./tools/download-file.js";
+import { mcpMeta as chatgpt } from "./tools/chatgpt.js";
+import { mcpMeta as googleMaps } from "./tools/google-maps.js";
+import { mcpMeta as consensus } from "./tools/consensus.js";
 import {
   memoryListFilesMeta,
   memoryFileReadMeta,
@@ -19,6 +22,9 @@ export const allMcpTools: McpToolMeta[] = [
   arztSuche,
   scrape,
   downloadFile,
+  chatgpt,
+  googleMaps,
+  consensus,
   memoryListFilesMeta,
   memoryFileReadMeta,
   memoryFileSaveMeta,

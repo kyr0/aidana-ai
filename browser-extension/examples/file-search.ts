@@ -9,7 +9,7 @@
  *
  * Run with:  bun run test:file-search
  */
-import { createExampleMcpSession } from "./example-mcp-client.js";
+import { createExampleMcpSession } from "./mcp-client.js";
 
 const session = await createExampleMcpSession("example-mcp-file-search");
 
