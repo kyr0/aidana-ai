@@ -41,3 +41,5 @@ test: restart
 	@echo "Running all MCP integration tests"
 	cd $(BROWSER_EXTENSION_DIR) && bun run test:mcp
 	cd mcp_tests && bun run test-web-search.ts
+	cd mcp_tests && bun run test-llm-dual-mode.ts
+	cd mcp_tests && bun run test-scrape-dedup.ts

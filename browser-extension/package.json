@@ -18,6 +18,8 @@
     "test:consensus": "tsx examples/consensus.ts",
     "test:scrape": "tsx examples/scrape.ts",
     "test:download-file": "tsx examples/download-file.ts",
+    "test:llm": "tsx ../mcp_tests/test-llm-dual-mode.ts",
+    "test:scrape-dedup": "tsx ../mcp_tests/test-scrape-dedup.ts",
     "mcp": "tsx mcp-server.ts"
   },
   "author": "Aron Homberg <info@aron-homberg.de>",

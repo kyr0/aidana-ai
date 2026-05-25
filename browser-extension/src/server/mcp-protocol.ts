@@ -170,6 +170,7 @@ export function createMcpProtocolServer(): Server {
         }
 
         // Apply LLM-based post-processing if requested (all formats)
+        // Uses DIRECT mode for fast, no-thinking text transformation
         if (dedup || mainTopicFocus) {
           try {
             const { callLlm } = await import("../tools/llm.js");
@@ -182,12 +183,17 @@ export function createMcpProtocolServer(): Server {
             }
             parts.push("Return the processed content directly without preamble or explanation.");
             const llmPrompt = parts.join("\n") + "\n\nContent:\n" + content;
-            const llmResult = await callLlm({ prompt: llmPrompt, reasoning: true });
+            const llmResult = await callLlm({
+              prompt: llmPrompt,
+              mode: "direct",
+              enableThinking: false,
+              maxTokens: 2048,
+            });
             content = llmResult.text;
           } catch (llmErr) {
             // If LLM is unavailable, return original content with a note
             const llmError = llmErr instanceof Error ? llmErr.message : String(llmErr);
-            content = `[Note: LLM post-processing (dedup/mainTopicFocus) failed: ${llmError}. Returning original content.]\n\n` + content;
+            content = `[Note: LLM post-processing failed: ${llmError}. Returning original content.]\n\n` + content;
           }
         }
 
@@ -481,15 +487,39 @@ export function createMcpProtocolServer(): Server {
       }
     }
 
-    // -- LLM tool (internal glitcr proxy call) --
+    // -- LLM tool (dual-mode: direct or proxied) --
     if (name === "llm") {
       try {
         const { callLlm } = await import("../tools/llm.js");
+        const a = args as Record<string, unknown>;
         const llmResult = await callLlm({
-          prompt: (args as any).prompt,
-          reasoning: (args as any).reasoning ?? false,
-          model: (args as any).model,
-          maxTokens: (args as any).maxTokens,
+          prompt: a.prompt as string,
+          mode: a.mode as "direct" | "proxy" | "auto" | undefined,
+          // Endpoint overrides
+          endpoint: a.endpoint as string | undefined,
+          apiKey: a.apiKey as string | undefined,
+          model: a.model as string | undefined,
+          // Generation hyperparameters
+          temperature: a.temperature as number | undefined,
+          maxTokens: a.maxTokens as number | undefined,
+          topP: a.topP as number | undefined,
+          topK: a.topK as number | undefined,
+          seed: a.seed as number | undefined,
+          presencePenalty: a.presencePenalty as number | undefined,
+          frequencyPenalty: a.frequencyPenalty as number | undefined,
+          repetitionPenalty: a.repetitionPenalty as number | undefined,
+          // Reasoning
+          enableThinking: a.enableThinking as boolean | undefined,
+          // Advanced
+          recursionDepth: a.recursionDepth as number | undefined,
+          // Embedding (reserved)
+          embeddingEndpoint: a.embeddingEndpoint as string | undefined,
+          embeddingModel: a.embeddingModel as string | undefined,
+          embeddingApiKey: a.embeddingApiKey as string | undefined,
+          // NER / Relation / Rerank (reserved)
+          nerModel: a.nerModel as string | undefined,
+          relationModel: a.relationModel as string | undefined,
+          rerankModel: a.rerankModel as string | undefined,
         });
         const output: Record<string, unknown> = { text: llmResult.text };
         if (llmResult.model) output.model = llmResult.model;
