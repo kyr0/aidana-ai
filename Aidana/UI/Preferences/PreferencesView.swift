@@ -7,31 +7,53 @@ import FluidAudio
 import SwiftUI
 import UniformTypeIdentifiers
 
+private enum PreferencesTab: String, CaseIterable {
+    case asr = "ASR"
+    case tts = "TTS"
+    case mcp = "MCP"
+    case llm = "LLM"
+    case chat = "Chat"
+}
+
 struct PreferencesView: View {
     @EnvironmentObject private var preferences: PreferencesStore
     @EnvironmentObject private var serverState: ServerState
     @State private var newHotword: String = ""
+    @State private var selectedTab: PreferencesTab = .asr
 
     private let modelCacheDirectory = ModelManager.modelCacheDirectory
 
     var body: some View {
-        TabView {
-            ASRPreferencesTab(
-                preferences: preferences,
-                serverState: serverState,
-                newHotword: $newHotword,
-                modelCacheDirectory: modelCacheDirectory
-            )
-            .tabItem { Label("ASR", systemImage: "waveform") }
+        VStack(spacing: 0) {
+            Picker("", selection: $selectedTab) {
+                ForEach(PreferencesTab.allCases, id: \.self) { tab in
+                    Text(tab.rawValue)
+                        .tag(tab)
+                }
+            }
+            .pickerStyle(.segmented)
+            .padding(.horizontal)
+            .padding(.top, 4)
 
-            TTSPreferencesTab(preferences: preferences, serverState: serverState)
-                .tabItem { Label("TTS", systemImage: "speaker.wave.2") }
+            Divider()
 
-            MCPPreferencesTab(preferences: preferences, serverState: serverState)
-                .tabItem { Label("MCP", systemImage: "server.rack") }
-
-            LLMPreferencesTab(preferences: preferences, serverState: serverState)
-                .tabItem { Label("LLM", systemImage: "brain") }
+            switch selectedTab {
+            case .asr:
+                ASRPreferencesTab(
+                    preferences: preferences,
+                    serverState: serverState,
+                    newHotword: $newHotword,
+                    modelCacheDirectory: modelCacheDirectory
+                )
+            case .tts:
+                TTSPreferencesTab(preferences: preferences, serverState: serverState)
+            case .mcp:
+                MCPPreferencesTab(preferences: preferences, serverState: serverState)
+            case .llm:
+                LLMPreferencesTab(preferences: preferences, serverState: serverState)
+            case .chat:
+                ChatPreferencesTab(preferences: preferences, serverState: serverState)
+            }
         }
     }
 }
@@ -779,11 +801,109 @@ private struct LLMPreferencesTab: View {
     }
 }
 
+// MARK: - Chat Tab
+
+private struct ChatPreferencesTab: View {
+    @ObservedObject var preferences: PreferencesStore
+    @ObservedObject var serverState: ServerState
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 20) {
+                // Status
+                GroupBox("Status") {
+                    HStack {
+                        Circle()
+                            .fill(chatStatusColor)
+                            .frame(width: 8, height: 8)
+                        Text(serverState.chatStatus.displayText)
+                            .font(.system(.body, design: .monospaced))
+                    }
+                    .padding(8)
+                }
+
+                // Server
+                GroupBox("Server") {
+                    VStack(alignment: .leading, spacing: 12) {
+                        Toggle("Start chat server automatically on launch", isOn: $preferences.chatAutoStart)
+
+                        HStack {
+                            Text("Port")
+                                .frame(width: 100, alignment: .leading)
+                            TextField(
+                                "8015",
+                                value: $preferences.chatPort,
+                                formatter: NumberFormatter.integerOnly
+                            )
+                            .textFieldStyle(.roundedBorder)
+                            .frame(width: 100)
+                        }
+
+                        HStack {
+                            Text("URL")
+                                .frame(width: 100, alignment: .leading)
+                            Text("http://127.0.0.1:\(preferences.chatPort)")
+                                .font(.system(.body, design: .monospaced))
+                                .foregroundColor(.secondary)
+                        }
+                    }
+                    .padding(8)
+                }
+
+                // Downstream Config (LLM Proxy credentials for auto-login)
+                GroupBox("Downstream Config") {
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text("LLM proxy credentials used to auto-login the chat UI.")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+
+                        HStack {
+                            Text("Proxy URL")
+                                .frame(width: 100, alignment: .leading)
+                            Text("http://127.0.0.1:\(preferences.llmProxyPort)")
+                                .font(.system(.body, design: .monospaced))
+                                .foregroundColor(.secondary)
+                        }
+
+                        HStack {
+                            Text("Admin User")
+                                .frame(width: 100, alignment: .leading)
+                            TextField("Admin user", text: $preferences.llmProxyAdminUser)
+                                .textFieldStyle(.roundedBorder)
+                        }
+
+                        HStack {
+                            Text("Admin Pass")
+                                .frame(width: 100, alignment: .leading)
+                            SecureField("Admin password", text: $preferences.llmProxyAdminPassword)
+                                .textFieldStyle(.roundedBorder)
+                        }
+                    }
+                    .padding(8)
+                }
+
+                Spacer()
+            }
+            .padding(24)
+        }
+    }
+
+    private var chatStatusColor: Color {
+        switch serverState.chatStatus {
+        case .ready: return .green
+        case .stopped: return .gray
+        case .starting: return .orange
+        case .error: return .red
+        }
+    }
+}
+
 private extension NumberFormatter {
     static let integerOnly: NumberFormatter = {
         let f = NumberFormatter()
         f.numberStyle = .none
         f.allowsFloats = false
+        f.usesGroupingSeparator = false
         f.minimum = 1
         f.maximum = 65535
         return f

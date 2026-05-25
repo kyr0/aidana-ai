@@ -181,6 +181,22 @@ final class PreferencesStore: ObservableObject {
         }
     }
 
+    // MARK: - Chat Configuration
+
+    @Published var chatAutoStart: Bool {
+        didSet {
+            defaults.set(chatAutoStart, forKey: Keys.chatAutoStart)
+            saveChatConfig()
+        }
+    }
+
+    @Published var chatPort: Int {
+        didSet {
+            defaults.set(chatPort, forKey: Keys.chatPort)
+            saveChatConfig()
+        }
+    }
+
     private let defaults: UserDefaults
 
     // MARK: - Config.json helpers
@@ -220,6 +236,20 @@ final class PreferencesStore: ObservableObject {
             return nil
         }
         return config["llm"]
+    }
+
+    private struct ChatConfig: Decodable, Sendable {
+        var autoStart: Bool = true
+        var port: Int = 8015
+    }
+
+    /// Read chat config from ~/.aidana/config.json if it exists.
+    private static func readChatConfig() -> ChatConfig? {
+        guard let data = try? Data(contentsOf: configURL),
+              let config = try? JSONDecoder().decode([String: ChatConfig].self, from: data) else {
+            return nil
+        }
+        return config["chat"]
     }
 
     /// Ensure ~/.aidana/config.json exists with default LLM config.
@@ -280,6 +310,27 @@ final class PreferencesStore: ObservableObject {
         }
     }
 
+    /// Write current chat preferences back to config.json.
+    private func saveChatConfig() {
+        let directory = Self.configURL.deletingLastPathComponent()
+        if !FileManager.default.fileExists(atPath: directory.path) {
+            try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        }
+
+        // Read existing config to preserve other sections
+        var existing = (try? JSONSerialization.jsonObject(with: Data(contentsOf: Self.configURL), options: []) as? [String: Any]) ?? [:]
+
+        let chatDict: [String: Any] = [
+            "autoStart": chatAutoStart,
+            "port": chatPort
+        ]
+        existing["chat"] = chatDict
+
+        if let data = try? JSONSerialization.data(withJSONObject: existing, options: .prettyPrinted) {
+            try? data.write(to: Self.configURL, options: .atomic)
+        }
+    }
+
     private init(defaults: UserDefaults = .standard) {
         Self.ensureConfigFile()
         self.defaults = defaults
@@ -308,6 +359,8 @@ final class PreferencesStore: ObservableObject {
             Keys.llmProxyPort: 8010,
             Keys.llmProxyAdminUser: "admin",
             Keys.llmProxyAdminPassword: "changeme",
+            Keys.chatAutoStart: true,
+            Keys.chatPort: 8015,
         ])
 
         let port = defaults.integer(forKey: Keys.serverPort)
@@ -343,6 +396,11 @@ final class PreferencesStore: ObservableObject {
         llmProxyPort = config?.proxyPort ?? (defaults.integer(forKey: Keys.llmProxyPort) == 0 ? 8010 : defaults.integer(forKey: Keys.llmProxyPort))
         llmProxyAdminUser = config?.proxyAdminUser ?? (defaults.string(forKey: Keys.llmProxyAdminUser) ?? "admin")
         llmProxyAdminPassword = config?.proxyAdminPassword ?? (defaults.string(forKey: Keys.llmProxyAdminPassword) ?? "changeme")
+
+        // Chat configuration — read from config.json first, fall back to UserDefaults
+        let chatConfig = Self.readChatConfig()
+        chatAutoStart = chatConfig?.autoStart ?? defaults.bool(forKey: Keys.chatAutoStart)
+        chatPort = chatConfig?.port ?? (defaults.integer(forKey: Keys.chatPort) == 0 ? 8015 : defaults.integer(forKey: Keys.chatPort))
     }
 
     /// All hotwords including the wake word (if non-empty).
@@ -379,5 +437,7 @@ final class PreferencesStore: ObservableObject {
         static let llmProxyPort = "preferences.llmProxyPort"
         static let llmProxyAdminUser = "preferences.llmProxyAdminUser"
         static let llmProxyAdminPassword = "preferences.llmProxyAdminPassword"
+        static let chatAutoStart = "preferences.chatAutoStart"
+        static let chatPort = "preferences.chatPort"
     }
 }

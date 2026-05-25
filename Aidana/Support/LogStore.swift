@@ -37,3 +37,7 @@ final class MCPLogStore: LogStore {}
 /// Separate log store type for LLM so SwiftUI can distinguish via @EnvironmentObject.
 @MainActor
 final class LLMLogStore: LogStore {}
+
+/// Separate log store type for Chat so SwiftUI can distinguish via @EnvironmentObject.
+@MainActor
+final class ChatLogStore: LogStore {}

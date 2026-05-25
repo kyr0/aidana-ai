@@ -21,7 +21,10 @@ class MockStore {
 	async login(email: string, password: string): Promise<{ user: User; token: string } | null> {
 		await delay();
 		const user = this.users.find((u) => u.email === email && u.status === "active");
-		if (user || (email === "admin@example.com" && password === "Admin123$")) {
+		// Accept known demo credentials OR any non-empty credentials for local embedded use
+		const isDemo = email === "admin@example.com" && password === "Admin123$";
+		const isLocal = email.length > 0 && password.length > 0;
+		if (user || isDemo || isLocal) {
 			const loggedInUser = user || this.users[0];
 			loggedInUser.lastLoginAt = new Date().toISOString();
 			const token = `mock_jwt_${Date.now().toString(36)}_${Math.random().toString(36).slice(2)}`;

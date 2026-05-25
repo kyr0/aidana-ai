@@ -25,11 +25,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private let ttsLogStore = TTSLogStore()
     private let mcpLogStore = MCPLogStore()
     private let llmLogStore = LLMLogStore()
+    private let chatLogStore = ChatLogStore()
     private lazy var testClient = ASRTestClient(logStore: logStore)
     private let aiServer = AIServer()
     private let ttsServer = TTSServer()
     private let mcpServer = MCPServer()
     private let llmServer = LLMServer()
+    private let chatServer = ChatServer()
     private lazy var statusBarController = StatusBarController(
         serverState: serverState,
         preferences: preferences
@@ -60,6 +62,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         TTSServer.killStaleProcesses()
         // Kill glitcr synchronously
         LLMServer.killStaleProcesses()
+        // Kill chat server synchronously
+        ChatServer.killStaleProcesses()
         Task {
             await aiServer.shutdown()
         }
@@ -73,6 +77,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let logRef = logStore
         let ttsLogRef = ttsLogStore
         let mcpLogRef = mcpLogStore
+        let chatLogRef = chatLogStore
         let stateRef = serverState
 
         serverLifecycleTask = Task { [weak self] in
@@ -155,6 +160,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             await self.llmServer.setLogCallback { message in
                 Task { @MainActor in
                     mcpLogRef.append(message)
+                }
+            }
+            await self.chatServer.setLogCallback { message in
+                Task { @MainActor in
+                    chatLogRef.append(message)
                 }
             }
             await self.mcpServer.setLifecycleCallback { event in
@@ -259,6 +269,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
             // Start LLM proxy sidecar
             await self.startLLMServer()
+
+            // Start chat server (detached - don't block startup)
+            Task.detached { [weak self] in
+                await self?.startChatServer()
+            }
         }
     }
 
@@ -613,6 +628,54 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         )
     }
 
+    private func startChatServer() async {
+        let autoStart = await MainActor.run { preferences.chatAutoStart }
+        guard autoStart else {
+            await MainActor.run {
+                chatLogStore.append("Chat auto-start disabled")
+            }
+            return
+        }
+
+        let chatPort = await MainActor.run { preferences.chatPort }
+
+        // Kill any existing processes on chat port and RPC port before starting
+        ChatServer.killProcessOnPort(chatPort)
+        ChatServer.killProcessOnPort(chatPort + 100)
+
+        await MainActor.run {
+            chatLogStore.append("Starting chat server on port \(chatPort)…")
+            serverState.setChatStatus(.starting)
+        }
+
+        do {
+            try await chatServer.start(configuration: .init(chatPort: chatPort))
+        } catch {
+            logger.error("Chat server start failed: \(error)")
+            await MainActor.run {
+                serverState.setChatStatus(.error(error.localizedDescription))
+                chatLogStore.append("Chat server error: \(error.localizedDescription)")
+            }
+            return
+        }
+
+        let ready = await chatServer.waitForReady(port: chatPort, timeout: 30)
+        guard ready else {
+            logger.error("Chat server did not become ready within timeout")
+            await chatServer.stopAndWait()
+            await MainActor.run {
+                serverState.setChatStatus(.error("timeout"))
+                chatLogStore.append("Chat server timeout — not responding")
+            }
+            return
+        }
+
+        await MainActor.run {
+            serverState.setChatStatus(.ready(port: chatPort))
+            chatLogStore.append("Chat server ready at http://127.0.0.1:\(chatPort)")
+        }
+    }
+
     private func stopServer() {
         serverLifecycleTask?.cancel()
         serverLifecycleTask = nil
@@ -620,6 +683,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             await mcpServer.stop()
             await ttsServer.stop()
             await llmServer.stop()
+            await chatServer.stop()
             await aiServer.stop()
         }
         serverState.setStatus(.stopped)
@@ -628,10 +692,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         serverState.setTTSStatus(.stopped)
         serverState.setMCPStatus(.stopped)
         serverState.setLLMStatus(.stopped)
+        serverState.setChatStatus(.stopped)
         logStore.append("Server stopped")
         ttsLogStore.append("TTS server stopped")
         mcpLogStore.append("MCP server stopped")
         llmLogStore.append("LLM proxy stopped")
+        chatLogStore.append("Chat server stopped")
     }
 
     private func currentTTSWarmupConfig(modelName: String) -> TTSServer.WarmupConfig {
@@ -663,6 +729,24 @@ private extension AppDelegate {
         NotificationCenter.default.publisher(for: .statusBarPreferencesRequested)
             .receive(on: RunLoop.main)
             .sink { [weak self] _ in self?.showSettingsWindow(selectedTab: "settings") }
+            .store(in: &cancellables)
+
+        NotificationCenter.default.publisher(for: .openChatRequested)
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in
+                let port = self?.preferences.chatPort ?? 8015
+                let chatURL = URL(string: "http://127.0.0.1:\(port)")!
+                NSWorkspace.shared.open(chatURL)
+            }
+            .store(in: &cancellables)
+
+        NotificationCenter.default.publisher(for: .openLlmAdminRequested)
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in
+                let port = self?.preferences.llmProxyPort ?? 8010
+                let adminURL = URL(string: "http://127.0.0.1:\(port)")!
+                NSWorkspace.shared.open(adminURL)
+            }
             .store(in: &cancellables)
 
         NotificationCenter.default.publisher(for: .mcpStartRequested)
@@ -841,6 +925,7 @@ extension AppDelegate {
             .environmentObject(ttsLogStore)
             .environmentObject(mcpLogStore)
             .environmentObject(llmLogStore)
+            .environmentObject(chatLogStore)
             .environmentObject(testClient)
 
         let hostingController = NSHostingController(rootView: rootView)
@@ -891,6 +976,7 @@ struct SettingsWindowContent: View {
                 .tabItem { Label("Logs", systemImage: "text.rightaligned.on.text") }
                 .tag("logs")
         }
+        .tabViewStyle(.automatic)
         .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("SettingsWindowSelectTab"))) { notification in
             if let tab = notification.userInfo?["tab"] as? String {
                 selectedTab = tab

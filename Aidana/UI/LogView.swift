@@ -6,34 +6,58 @@
 import AppKit
 import SwiftUI
 
+private enum LogTab: String, CaseIterable {
+    case asr = "ASR"
+    case tts = "TTS"
+    case mcp = "MCP"
+    case llm = "LLM"
+    case chat = "Chat"
+}
+
 struct LogView: View {
     @EnvironmentObject private var asrLogStore: LogStore
     @EnvironmentObject private var ttsLogStore: TTSLogStore
     @EnvironmentObject private var mcpLogStore: MCPLogStore
     @EnvironmentObject private var llmLogStore: LLMLogStore
+    @EnvironmentObject private var chatLogStore: ChatLogStore
     @EnvironmentObject private var serverState: ServerState
     @EnvironmentObject private var testClient: ASRTestClient
     @EnvironmentObject private var preferences: PreferencesStore
+    @State private var selectedTab: LogTab = .asr
 
     var body: some View {
-        TabView {
-            ASRLogTab()
-                .environmentObject(asrLogStore)
-                .environmentObject(serverState)
-                .environmentObject(testClient)
-                .tabItem { Label("ASR", systemImage: "waveform") }
+        VStack(spacing: 0) {
+            Picker("", selection: $selectedTab) {
+                ForEach(LogTab.allCases, id: \.self) { tab in
+                    Text(tab.rawValue)
+                        .tag(tab)
+                }
+            }
+            .pickerStyle(.segmented)
+            .padding(.horizontal)
+            .padding(.top, 4)
 
-            TTSLogTab()
-                .environmentObject(ttsLogStore)
-                .tabItem { Label("TTS", systemImage: "speaker.wave.2") }
+            Divider()
 
-            MCPLogTab()
-                .environmentObject(mcpLogStore)
-                .tabItem { Label("MCP", systemImage: "server.rack") }
-
-            LLMLogTab()
-                .environmentObject(llmLogStore)
-                .tabItem { Label("LLM", systemImage: "brain") }
+            switch selectedTab {
+            case .asr:
+                ASRLogTab()
+                    .environmentObject(asrLogStore)
+                    .environmentObject(serverState)
+                    .environmentObject(testClient)
+            case .tts:
+                TTSLogTab()
+                    .environmentObject(ttsLogStore)
+            case .mcp:
+                MCPLogTab()
+                    .environmentObject(mcpLogStore)
+            case .llm:
+                LLMLogTab()
+                    .environmentObject(llmLogStore)
+            case .chat:
+                ChatLogTab()
+                    .environmentObject(chatLogStore)
+            }
         }
     }
 }
@@ -611,4 +635,46 @@ private func logText(_ entries: [LogStore.Entry]) -> String {
     entries.map { entry in
         "\(_timeFormatter.string(from: entry.timestamp))  \(entry.message)"
     }.joined(separator: "\n")
+}
+
+// MARK: - Chat Log Tab
+
+private struct ChatLogTab: View {
+    @EnvironmentObject private var logStore: ChatLogStore
+    @EnvironmentObject private var preferences: PreferencesStore
+
+    var body: some View {
+        VStack(spacing: 0) {
+            LogPanelView(entries: logStore.entries)
+
+            Divider()
+
+            HStack {
+                Text("\(logStore.entries.count) entries")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                Spacer()
+                Button("Open Chat") {
+                    let chatURL = URL(string: "http://127.0.0.1:\(preferences.chatPort)")!
+                    NSWorkspace.shared.open(chatURL)
+                }
+                .buttonStyle(.borderless)
+                .font(.caption)
+                .help("Open the chat UI in your browser")
+                Button("Copy") {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(logText(logStore.entries), forType: .string)
+                }
+                .buttonStyle(.borderless)
+                .font(.caption)
+                Button("Clear") {
+                    logStore.clear()
+                }
+                .buttonStyle(.borderless)
+                .font(.caption)
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+        }
+    }
 }

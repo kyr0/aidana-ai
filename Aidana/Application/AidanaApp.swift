@@ -10,9 +10,6 @@ struct AidanaApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
 
     var body: some Scene {
-        WindowGroup(id: "settings") {
-            EmptyView()
-        }
-        .commandsRemoved()
+        // No scenes - settings window is managed programmatically by AppDelegate
     }
 }

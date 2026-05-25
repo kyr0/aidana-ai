@@ -15,6 +15,8 @@ final class StatusBarController {
     private let ttsInfoItem = NSMenuItem(title: "TTS: Stopped", action: nil, keyEquivalent: "")
     private let mcpInfoItem = NSMenuItem(title: "MCP: Stopped", action: nil, keyEquivalent: "")
     private let llmInfoItem = NSMenuItem(title: "LLM: Stopped", action: nil, keyEquivalent: "")
+    private let openChatItem = NSMenuItem(title: "Open Chat…", action: #selector(handleOpenChat), keyEquivalent: "")
+    private let openLlmAdminItem = NSMenuItem(title: "Open LLM Proxy Admin…", action: #selector(handleOpenLlmAdmin), keyEquivalent: "")
     private let logItem = NSMenuItem(title: "Log…", action: #selector(handleLogRequest), keyEquivalent: "l")
     private let preferencesItem = NSMenuItem(title: "Preferences…", action: #selector(handlePreferencesRequest), keyEquivalent: ",")
     private let quitItem = NSMenuItem(title: "Quit Aidana", action: #selector(handleQuit), keyEquivalent: "q")
@@ -43,6 +45,8 @@ final class StatusBarController {
         logItem.target = self
         preferencesItem.target = self
         quitItem.target = self
+        openChatItem.target = self
+        openLlmAdminItem.target = self
         asrInfoItem.isEnabled = false
         ttsInfoItem.isEnabled = false
         mcpInfoItem.isEnabled = false
@@ -53,6 +57,9 @@ final class StatusBarController {
             ttsInfoItem,
             mcpInfoItem,
             llmInfoItem,
+            NSMenuItem.separator(),
+            openChatItem,
+            openLlmAdminItem,
             NSMenuItem.separator(),
             logItem,
             preferencesItem,
@@ -162,6 +169,14 @@ final class StatusBarController {
         NotificationCenter.default.post(name: .statusBarPreferencesRequested, object: nil)
     }
 
+    @objc private func handleOpenChat() {
+        NotificationCenter.default.post(name: .openChatRequested, object: nil)
+    }
+
+    @objc private func handleOpenLlmAdmin() {
+        NotificationCenter.default.post(name: .openLlmAdminRequested, object: nil)
+    }
+
     @objc private func handleQuit() {
         quitAction()
     }
@@ -177,4 +192,6 @@ extension Notification.Name {
     static let llmStopRequested = Notification.Name("com.aidana.llmStopRequested")
     static let llmRestartRequested = Notification.Name("com.aidana.llmRestartRequested")
     static let llmUpdateRequested = Notification.Name("com.aidana.llmUpdateRequested")
+    static let openChatRequested = Notification.Name("com.aidana.openChatRequested")
+    static let openLlmAdminRequested = Notification.Name("com.aidana.openLlmAdminRequested")
 }

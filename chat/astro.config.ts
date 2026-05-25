@@ -5,6 +5,8 @@ import tailwindcss from "@tailwindcss/vite";
 import { defussRpc } from "defuss-rpc/astro.js";
 import RpcApi from "./src/rpc.js";
 
+const chatPort = parseInt(process.env.CHAT_PORT || "8015", 10);
+
 export default defineConfig({
   integrations: [
     defuss({
@@ -12,10 +14,14 @@ export default defineConfig({
     }),
     defussRpc({
       api: RpcApi,
-      port: 0,
+      port: chatPort + 100,
       watch: ["src/rpc/**/*.ts", "src/lib/**/*.ts"],
     }),
   ],
+  server: {
+    host: "127.0.0.1",
+    port: chatPort,
+  },
   vite: {
     ssr: {
       noExternal: ["astro"],

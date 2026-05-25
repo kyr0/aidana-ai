@@ -1,10 +1,12 @@
 import { addHook } from "defuss-rpc/server.js";
 import { AuthApi } from "./rpc/auth.js";
 import { ChatApi } from "./rpc/chat-api.js";
+import { ConfigApi } from "./rpc/config.js";
 
 export const RpcApi = {
 	AuthApi,
 	ChatApi,
+	ConfigApi,
 };
 
 interface WhitelistRpcCall {
@@ -15,6 +17,7 @@ interface WhitelistRpcCall {
 const rpcCallWhitelist: WhitelistRpcCall[] = [
 	{ className: "AuthApi", methodName: "login" },
 	{ className: "AuthApi", methodName: "logout" },
+	{ className: "ConfigApi", methodName: "getLlmConfig" },
 ];
 
 addHook({
