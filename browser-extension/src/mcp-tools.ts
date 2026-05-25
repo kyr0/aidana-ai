@@ -7,6 +7,7 @@ import { mcpMeta as chatgpt } from "./tools/chatgpt.js";
 import { mcpMeta as googleMaps } from "./tools/google-maps.js";
 import { mcpMeta as consensus } from "./tools/consensus.js";
 import { mcpMeta as webSearch } from "./tools/web-search.js";
+import { mcpMeta as llm } from "./tools/llm.js";
 import {
   memoryListFilesMeta,
   memoryFileReadMeta,
@@ -27,6 +28,7 @@ export const allMcpTools: McpToolMeta[] = [
   googleMaps,
   consensus,
   webSearch,
+  llm,
   memoryListFilesMeta,
   memoryFileReadMeta,
   memoryFileSaveMeta,

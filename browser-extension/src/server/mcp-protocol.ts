@@ -107,6 +107,8 @@ export function createMcpProtocolServer(): Server {
         const format = (args as any).format ?? "html";
         const debug = (args as any).debug ?? false;
         const closeTab = (args as any).closeTab ?? true;
+        const dedup = (args as any).dedup ?? false;
+        const mainTopicFocus = (args as any).mainTopicFocus;
 
         // Get raw HTML via browser automation
         const item = await doWorkItem({
@@ -157,17 +159,39 @@ export function createMcpProtocolServer(): Server {
         if (result.schemaOrgData) metadata.schemaOrgData = result.schemaOrgData;
         if (debug && result.debug) metadata.debug = result.debug;
 
+        // Resolve content based on format
+        let content: string;
         if (format === "md") {
-          const content = result.contentMarkdown ?? result.content;
-          return { content: [{ type: "text", text: JSON.stringify({ content_type: "md", metadata, content }, null, 2) }] };
+          content = result.contentMarkdown ?? result.content;
+        } else if (format === "json") {
+          content = result.content;
+        } else {
+          content = result.content;
         }
 
-        if (format === "json") {
-          return { content: [{ type: "text", text: JSON.stringify({ content_type: "json", metadata, content: result.content }, null, 2) }] };
+        // Apply LLM-based post-processing if requested (all formats)
+        if (dedup || mainTopicFocus) {
+          try {
+            const { callLlm } = await import("../tools/llm.js");
+            const parts: string[] = [];
+            if (mainTopicFocus) {
+              parts.push(`Extract and focus only on content related to: "${mainTopicFocus}". Ignore unrelated sections.`);
+            }
+            if (dedup) {
+              parts.push("Remove repetitive, redundant, or duplicate content. Keep the output concise while preserving all unique information.");
+            }
+            parts.push("Return the processed content directly without preamble or explanation.");
+            const llmPrompt = parts.join("\n") + "\n\nContent:\n" + content;
+            const llmResult = await callLlm({ prompt: llmPrompt, reasoning: true });
+            content = llmResult.text;
+          } catch (llmErr) {
+            // If LLM is unavailable, return original content with a note
+            const llmError = llmErr instanceof Error ? llmErr.message : String(llmErr);
+            content = `[Note: LLM post-processing (dedup/mainTopicFocus) failed: ${llmError}. Returning original content.]\n\n` + content;
+          }
         }
 
-        // format === "html" — cleaned HTML with metadata
-        return { content: [{ type: "text", text: JSON.stringify({ content_type: "html", metadata, content: result.content }, null, 2) }] };
+        return { content: [{ type: "text", text: JSON.stringify({ content_type: format, metadata, content }, null, 2) }] };
       } catch (err: unknown) {
         const message = err instanceof Error ? err.message : String(err);
         return {
@@ -452,6 +476,30 @@ export function createMcpProtocolServer(): Server {
         const message = err instanceof Error ? err.message : String(err);
         return {
           content: [{ type: "text", text: `ChatGPT error: ${message}` }],
+          isError: true,
+        };
+      }
+    }
+
+    // -- LLM tool (internal glitcr proxy call) --
+    if (name === "llm") {
+      try {
+        const { callLlm } = await import("../tools/llm.js");
+        const llmResult = await callLlm({
+          prompt: (args as any).prompt,
+          reasoning: (args as any).reasoning ?? false,
+          model: (args as any).model,
+          maxTokens: (args as any).maxTokens,
+        });
+        const output: Record<string, unknown> = { text: llmResult.text };
+        if (llmResult.model) output.model = llmResult.model;
+        if (llmResult.reasoningContent) output.reasoningContent = llmResult.reasoningContent;
+        if (llmResult.usage) output.usage = llmResult.usage;
+        return { content: [{ type: "text", text: JSON.stringify(output, null, 2) }] };
+      } catch (err: unknown) {
+        const message = err instanceof Error ? err.message : String(err);
+        return {
+          content: [{ type: "text", text: `LLM error: ${message}` }],
           isError: true,
         };
       }

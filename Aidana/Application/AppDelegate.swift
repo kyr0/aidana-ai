@@ -24,10 +24,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private let logStore = LogStore()
     private let ttsLogStore = TTSLogStore()
     private let mcpLogStore = MCPLogStore()
+    private let llmLogStore = LLMLogStore()
     private lazy var testClient = ASRTestClient(logStore: logStore)
     private let aiServer = AIServer()
     private let ttsServer = TTSServer()
     private let mcpServer = MCPServer()
+    private let llmServer = LLMServer()
     private lazy var statusBarController = StatusBarController(
         serverState: serverState,
         preferences: preferences
@@ -36,8 +38,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     private var cancellables = Set<AnyCancellable>()
-    private var preferencesWindowController: NSWindowController?
-    private var logWindowController: NSWindowController?
+    private var settingsWindowController: NSWindowController?
     private var serverLifecycleTask: Task<Void, Never>?
     private var mcpActionTask: Task<Void, Never>?
     private var mcpManualStopRequested = false
@@ -57,6 +58,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         MCPServer.killStaleProcesses()
         // Kill TTS synchronously — can't await in willTerminate
         TTSServer.killStaleProcesses()
+        // Kill glitcr synchronously
+        LLMServer.killStaleProcesses()
         Task {
             await aiServer.shutdown()
         }
@@ -145,6 +148,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 }
             }
             await self.mcpServer.setLogCallback { message in
+                Task { @MainActor in
+                    mcpLogRef.append(message)
+                }
+            }
+            await self.llmServer.setLogCallback { message in
                 Task { @MainActor in
                     mcpLogRef.append(message)
                 }
@@ -242,9 +250,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 }
             }
 
-            // Start TTS sidecar
-            await self.startTTSServer()
+            // Start TTS sidecar (detached — don't block LLM startup)
+            Task.detached { [weak self] in
+                await self?.startTTSServer()
+            }
+
             await mcpStartupTask.value
+
+            // Start LLM proxy sidecar
+            await self.startLLMServer()
         }
     }
 
@@ -474,8 +488,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             return
         }
 
-        // Start health check loop
-        await startTTSHealthCheck(port: ttsPort, modelName: modelName)
+        // Start health check loop (detached — don't block startup)
+        Task.detached { [weak self] in
+            await self?.startTTSHealthCheck(port: ttsPort, modelName: modelName)
+        }
     }
 
     private func startTTSHealthCheck(port: Int, modelName: String) async {
@@ -501,12 +517,109 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
     }
 
+    private func startLLMServer() async {
+        let autoStart = await MainActor.run { preferences.llmAutoStart }
+        guard autoStart else {
+            await MainActor.run {
+                llmLogStore.append("LLM auto-start disabled")
+            }
+            return
+        }
+
+        var configuration = await currentLLMConfiguration()
+
+        // Fallback: read config.json directly if preferences are empty
+        if configuration.endpoint.isEmpty || configuration.apiKey.isEmpty {
+            configuration = await readLlmConfigFromJSON() ?? configuration
+        }
+
+        guard !configuration.endpoint.isEmpty && !configuration.apiKey.isEmpty else {
+            await MainActor.run {
+                llmLogStore.append("LLM proxy skipped (endpoint/apiKey not configured)")
+            }
+            return
+        }
+
+        await MainActor.run {
+            llmLogStore.append("Starting LLM proxy on port \(configuration.proxyPort)…")
+            serverState.setLLMStatus(.starting)
+        }
+
+        do {
+            try await llmServer.start(configuration: configuration)
+        } catch {
+            logger.error("LLM proxy start failed: \(error)")
+            await MainActor.run {
+                serverState.setLLMStatus(.error(error.localizedDescription))
+                llmLogStore.append("LLM proxy error: \(error.localizedDescription)")
+            }
+            return
+        }
+
+        let ready = await llmServer.waitForReady(port: configuration.proxyPort, timeout: 30)
+        guard ready else {
+            logger.error("LLM proxy did not become ready within timeout")
+            await llmServer.stopAndWait()
+            await MainActor.run {
+                serverState.setLLMStatus(.error("timeout"))
+                llmLogStore.append("LLM proxy timeout — not responding")
+            }
+            return
+        }
+
+        await MainActor.run {
+            serverState.setLLMStatus(.ready(port: configuration.proxyPort))
+            llmLogStore.append("LLM proxy ready at http://127.0.0.1:\(configuration.proxyPort)")
+        }
+    }
+
+    private func currentLLMConfiguration() -> LLMServer.LaunchConfiguration {
+        .init(
+            endpoint: preferences.llmEndpoint,
+            apiKey: preferences.llmApiKey,
+            model: preferences.llmModel,
+            proxyPort: preferences.llmProxyPort,
+            proxyAdminUser: preferences.llmProxyAdminUser,
+            proxyAdminPassword: preferences.llmProxyAdminPassword
+        )
+    }
+
+    /// Direct read from ~/.aidana/config.json as a fallback when preferences are empty.
+    private func readLlmConfigFromJSON() async -> LLMServer.LaunchConfiguration? {
+        let configURL = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".aidana", isDirectory: true)
+            .appendingPathComponent("config.json")
+        guard let data = try? Data(contentsOf: configURL),
+              let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let llm = dict["llm"] as? [String: Any] else { return nil }
+
+        let endpoint = llm["endpoint"] as? String ?? ""
+        let apiKey = llm["apiKey"] as? String ?? ""
+        guard !endpoint.isEmpty && !apiKey.isEmpty else { return nil }
+
+        let model = llm["model"] as? String ?? ""
+        let proxy = llm["proxy"] as? [String: Any] ?? [:]
+        let proxyPort = proxy["port"] as? Int ?? 8010
+        let adminUser = proxy["admin_user"] as? String ?? "admin"
+        let adminPassword = proxy["admin_password"] as? String ?? "changeme"
+
+        return .init(
+            endpoint: endpoint,
+            apiKey: apiKey,
+            model: model,
+            proxyPort: proxyPort,
+            proxyAdminUser: adminUser,
+            proxyAdminPassword: adminPassword
+        )
+    }
+
     private func stopServer() {
         serverLifecycleTask?.cancel()
         serverLifecycleTask = nil
         Task {
             await mcpServer.stop()
             await ttsServer.stop()
+            await llmServer.stop()
             await aiServer.stop()
         }
         serverState.setStatus(.stopped)
@@ -514,9 +627,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         serverState.setTTSReady(false)
         serverState.setTTSStatus(.stopped)
         serverState.setMCPStatus(.stopped)
+        serverState.setLLMStatus(.stopped)
         logStore.append("Server stopped")
         ttsLogStore.append("TTS server stopped")
         mcpLogStore.append("MCP server stopped")
+        llmLogStore.append("LLM proxy stopped")
     }
 
     private func currentTTSWarmupConfig(modelName: String) -> TTSServer.WarmupConfig {
@@ -542,12 +657,12 @@ private extension AppDelegate {
     func observeMenuRequests() {
         NotificationCenter.default.publisher(for: .statusBarLogRequested)
             .receive(on: RunLoop.main)
-            .sink { [weak self] _ in self?.showLogWindow() }
+            .sink { [weak self] _ in self?.showSettingsWindow(selectedTab: "logs") }
             .store(in: &cancellables)
 
         NotificationCenter.default.publisher(for: .statusBarPreferencesRequested)
             .receive(on: RunLoop.main)
-            .sink { [weak self] _ in self?.showPreferencesWindow(nil) }
+            .sink { [weak self] _ in self?.showSettingsWindow(selectedTab: "settings") }
             .store(in: &cancellables)
 
         NotificationCenter.default.publisher(for: .mcpStartRequested)
@@ -568,6 +683,56 @@ private extension AppDelegate {
             .receive(on: RunLoop.main)
             .sink { [weak self] _ in
                 _ = self?.enqueueMCPAction(.restartManual)
+            }
+            .store(in: &cancellables)
+
+        NotificationCenter.default.publisher(for: .llmStartRequested)
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in
+                Task { await self?.startLLMServer() }
+            }
+            .store(in: &cancellables)
+
+        NotificationCenter.default.publisher(for: .llmStopRequested)
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in
+                Task {
+                    await self?.llmServer.stopAndWait()
+                    await MainActor.run {
+                        self?.serverState.setLLMStatus(.stopped)
+                        self?.llmLogStore.append("LLM proxy stopped")
+                    }
+                }
+            }
+            .store(in: &cancellables)
+
+        NotificationCenter.default.publisher(for: .llmRestartRequested)
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in
+                Task {
+                    await self?.llmServer.stopAndWait()
+                    await self?.startLLMServer()
+                }
+            }
+            .store(in: &cancellables)
+
+        NotificationCenter.default.publisher(for: .llmUpdateRequested)
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in
+                Task {
+                    let config = await self?.currentLLMConfiguration()
+                    if let config {
+                        do {
+                            try await self?.llmServer.runAuthCreate(configuration: config)
+                        } catch {
+                            await MainActor.run {
+                                self?.llmLogStore.append("Auth create failed: \(error.localizedDescription)")
+                            }
+                        }
+                    }
+                    await self?.llmServer.stopAndWait()
+                    await self?.startLLMServer()
+                }
             }
             .store(in: &cancellables)
 
@@ -652,81 +817,85 @@ private extension AppDelegate {
 
 }
 
-// MARK: - Preferences Window
+// MARK: - Settings Window (tabbed: Settings + Logs)
 
 extension AppDelegate {
-    @objc private func showPreferencesWindow(_ sender: Any?) {
-        if let controller = preferencesWindowController, let window = controller.window {
-            window.makeKeyAndOrderFront(sender)
+    private func showSettingsWindow(selectedTab: String) {
+        // If window exists, bring it forward and switch tab
+        if let controller = settingsWindowController, let window = controller.window {
+            window.makeKeyAndOrderFront(nil)
             NSApp.activate(ignoringOtherApps: true)
+            // Switch tab via notification
+            NotificationCenter.default.post(
+                name: NSNotification.Name("SettingsWindowSelectTab"),
+                object: nil,
+                userInfo: ["tab": selectedTab]
+            )
             return
         }
 
-        let hostingController = NSHostingController(
-            rootView: PreferencesView().environmentObject(preferences).environmentObject(serverState)
-        )
+        let rootView = SettingsWindowContent(selectedTab: selectedTab)
+            .environmentObject(preferences)
+            .environmentObject(serverState)
+            .environmentObject(logStore)
+            .environmentObject(ttsLogStore)
+            .environmentObject(mcpLogStore)
+            .environmentObject(llmLogStore)
+            .environmentObject(testClient)
+
+        let hostingController = NSHostingController(rootView: rootView)
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 460, height: 400),
-            styleMask: [.titled, .closable],
+            contentRect: NSRect(x: 0, y: 0, width: 560, height: 520),
+            styleMask: [.titled, .closable, .resizable, .miniaturizable],
             backing: .buffered,
             defer: false
         )
         window.title = "Aidana Settings"
+        window.identifier = NSUserInterfaceItemIdentifier("settings")
+        window.minSize = NSSize(width: 400, height: 300)
         window.center()
         window.contentViewController = hostingController
         window.isReleasedWhenClosed = false
         window.delegate = self
 
         let controller = NSWindowController(window: window)
-        preferencesWindowController = controller
-        controller.showWindow(sender)
+        settingsWindowController = controller
+        controller.showWindow(nil)
         NSApp.activate(ignoringOtherApps: true)
     }
 
     func windowWillClose(_ notification: Notification) {
         guard let window = notification.object as? NSWindow else { return }
-        if window === preferencesWindowController?.window {
-            preferencesWindowController = nil
-        } else if window === logWindowController?.window {
-            logWindowController = nil
+        if window === settingsWindowController?.window {
+            settingsWindowController = nil
         }
     }
 }
 
-// MARK: - Log Window
+// MARK: - Settings Window Content (outer tab view)
 
-extension AppDelegate {
-    private func showLogWindow() {
-        if let controller = logWindowController, let window = controller.window {
-            window.makeKeyAndOrderFront(nil)
-            NSApp.activate(ignoringOtherApps: true)
-            return
+struct SettingsWindowContent: View {
+    @State private var selectedTab: String = "settings"
+
+    init(selectedTab: String) {
+        _selectedTab = State(initialValue: selectedTab)
+    }
+
+    var body: some View {
+        TabView(selection: $selectedTab) {
+            PreferencesView()
+                .tabItem { Label("Settings", systemImage: "gearshape") }
+                .tag("settings")
+
+            LogView()
+                .tabItem { Label("Logs", systemImage: "text.rightaligned.on.text") }
+                .tag("logs")
         }
-
-        let hostingController = NSHostingController(
-            rootView: LogView()
-                .environmentObject(logStore)
-                .environmentObject(ttsLogStore)
-                .environmentObject(mcpLogStore)
-                .environmentObject(serverState)
-                .environmentObject(testClient)
-        )
-        let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 520, height: 360),
-            styleMask: [.titled, .closable, .resizable],
-            backing: .buffered,
-            defer: false
-        )
-        window.title = "Aidana Log"
-        window.center()
-        window.contentViewController = hostingController
-        window.isReleasedWhenClosed = false
-        window.delegate = self
-
-        let controller = NSWindowController(window: window)
-        logWindowController = controller
-        controller.showWindow(nil)
-        NSApp.activate(ignoringOtherApps: true)
+        .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("SettingsWindowSelectTab"))) { notification in
+            if let tab = notification.userInfo?["tab"] as? String {
+                selectedTab = tab
+            }
+        }
     }
 }
 

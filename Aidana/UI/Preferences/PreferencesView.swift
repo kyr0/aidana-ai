@@ -29,8 +29,10 @@ struct PreferencesView: View {
 
             MCPPreferencesTab(preferences: preferences, serverState: serverState)
                 .tabItem { Label("MCP", systemImage: "server.rack") }
+
+            LLMPreferencesTab(preferences: preferences, serverState: serverState)
+                .tabItem { Label("LLM", systemImage: "brain") }
         }
-        .frame(width: 460, height: 560)
     }
 }
 
@@ -624,6 +626,155 @@ private struct MCPPreferencesTab: View {
     }
 
     private func postMCPRequest(_ name: Notification.Name) {
+        NotificationCenter.default.post(name: name, object: nil)
+    }
+}
+
+// MARK: - LLM Tab
+
+private struct LLMPreferencesTab: View {
+    @ObservedObject private var preferences: PreferencesStore
+    @ObservedObject private var serverState: ServerState
+    @State private var showCopiedFeedback = false
+    
+    init(preferences: PreferencesStore, serverState: ServerState) {
+        self._preferences = ObservedObject(wrappedValue: preferences)
+        self._serverState = ObservedObject(wrappedValue: serverState)
+    }
+
+    var body: some View {
+        Form {
+            Section("LLM Endpoint") {
+                TextField("Endpoint URL", text: $preferences.llmEndpoint)
+                    .textContentType(.URL)
+                SecureField("API Key", text: $preferences.llmApiKey)
+                    .textContentType(.password)
+                TextField("Model", text: $preferences.llmModel)
+            }
+
+            Section("Proxy Configuration") {
+                HStack {
+                    Text("Port")
+                    Spacer()
+                    TextField("Port", value: $preferences.llmProxyPort, formatter: NumberFormatter.integerOnly)
+                        .multilineTextAlignment(.trailing)
+                        .frame(width: 80)
+                }
+                TextField("Admin User", text: $preferences.llmProxyAdminUser)
+                SecureField("Admin Password", text: $preferences.llmProxyAdminPassword)
+                    .textContentType(.newPassword)
+            }
+
+            Section("Startup") {
+                Toggle("Auto-start on launch", isOn: $preferences.llmAutoStart)
+            }
+
+            Section("Status") {
+                HStack {
+                    Circle()
+                        .fill(llmStatusColor)
+                        .frame(width: 8, height: 8)
+                    Text(llmStatusText)
+                        .font(.caption)
+                    Spacer()
+                    if case .ready = serverState.llmStatus {
+                        Button("Restart") {
+                            postNotification(.llmRestartRequested)
+                        }
+                        .font(.caption)
+                    } else if serverState.llmStatus == .stopped {
+                        Button("Start") {
+                            postNotification(.llmStartRequested)
+                        }
+                        .font(.caption)
+                    }
+                }
+            }
+
+            Section("Actions") {
+                HStack {
+                    Button("Update") {
+                        postNotification(.llmUpdateRequested)
+                    }
+                    .help("Generate auth credentials and restart LLM proxy")
+
+                    Button("Open Admin Panel") {
+                        let adminURL = URL(string: "http://127.0.0.1:\(preferences.llmProxyPort)")!
+                        NSWorkspace.shared.open(adminURL)
+                    }
+                    .help("Open the glitcr admin panel in your browser")
+                }
+            }
+
+            Section("Client Configuration") {
+                TextEditor(text: llmConfigJSON)
+                    .frame(height: 80)
+                    .font(.system(.caption, design: .monospaced))
+                HStack {
+                    Spacer()
+                    Button("Copy") {
+                        copyConfigToClipboard()
+                        showCopiedFeedback = true
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                            showCopiedFeedback = false
+                        }
+                    }
+                    .font(.caption)
+                    if showCopiedFeedback {
+                        Text("Copied!")
+                            .font(.caption)
+                            .foregroundColor(.green)
+                    }
+                }
+            }
+        }
+        .formStyle(.grouped)
+    }
+
+    private var llmStatusColor: Color {
+        switch serverState.llmStatus {
+        case .stopped: return .gray
+        case .starting: return .yellow
+        case .ready: return .green
+        case .error: return .red
+        }
+    }
+
+    private var llmStatusText: String {
+        serverState.llmStatus.displayText
+    }
+
+    private var llmConfigJSON: Binding<String> {
+        Binding<String> {
+            let endpoint = "http://127.0.0.1:\(preferences.llmProxyPort)"
+            let config: [String: Any] = [
+                "llm": [
+                    "endpoint": preferences.llmEndpoint,
+                    "apiKey": preferences.llmApiKey,
+                    "model": preferences.llmModel,
+                    "proxy": [
+                        "port": preferences.llmProxyPort,
+                        "admin_user": preferences.llmProxyAdminUser,
+                        "admin_password": preferences.llmProxyAdminPassword,
+                        "autoStart": preferences.llmAutoStart
+                    ]
+                ]
+            ]
+            if let data = try? JSONSerialization.data(withJSONObject: config, options: .prettyPrinted),
+               let json = String(data: data, encoding: .utf8) {
+                return json
+            }
+            return "{}"
+        } set: { _ in }
+    }
+
+    private func copyConfigToClipboard() {
+        let pb = NSPasteboard.general
+        pb.clearContents()
+        pb.setString(llmConfigJSON.wrappedValue, forType: .string)
+    }
+
+    private func postNotification(_ name: Notification.Name) {
         NotificationCenter.default.post(name: name, object: nil)
     }
 }

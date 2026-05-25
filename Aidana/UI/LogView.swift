@@ -10,8 +10,10 @@ struct LogView: View {
     @EnvironmentObject private var asrLogStore: LogStore
     @EnvironmentObject private var ttsLogStore: TTSLogStore
     @EnvironmentObject private var mcpLogStore: MCPLogStore
+    @EnvironmentObject private var llmLogStore: LLMLogStore
     @EnvironmentObject private var serverState: ServerState
     @EnvironmentObject private var testClient: ASRTestClient
+    @EnvironmentObject private var preferences: PreferencesStore
 
     var body: some View {
         TabView {
@@ -28,8 +30,11 @@ struct LogView: View {
             MCPLogTab()
                 .environmentObject(mcpLogStore)
                 .tabItem { Label("MCP", systemImage: "server.rack") }
+
+            LLMLogTab()
+                .environmentObject(llmLogStore)
+                .tabItem { Label("LLM", systemImage: "brain") }
         }
-        .frame(width: 520, height: 360)
     }
 }
 
@@ -138,45 +143,111 @@ private struct MCPLogTab: View {
     @EnvironmentObject private var logStore: MCPLogStore
     @EnvironmentObject private var serverState: ServerState
     @StateObject private var toolsViewModel = MCPToolsViewModel()
+    @State private var selectedSubTab: MCPSubTab = .logs
 
     var body: some View {
-        TabView {
-            // Logs sub-tab
-            VStack(spacing: 0) {
-                LogPanelView(entries: logStore.entries)
+        VStack(spacing: 0) {
+            // Content area
+            switch selectedSubTab {
+            case .logs:
+                VStack(spacing: 0) {
+                    LogPanelView(entries: logStore.entries)
 
-                Divider()
+                    Divider()
 
-                HStack {
-                    Text("\(logStore.entries.count) entries")
+                    HStack {
+                        Text("\(logStore.entries.count) entries")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                        Spacer()
+                        Button("Copy") {
+                            NSPasteboard.general.clearContents()
+                            NSPasteboard.general.setString(logText(logStore.entries), forType: .string)
+                        }
+                        .buttonStyle(.borderless)
                         .font(.caption)
-                        .foregroundColor(.secondary)
-                    Spacer()
-                    Button("Copy") {
-                        NSPasteboard.general.clearContents()
-                        NSPasteboard.general.setString(logText(logStore.entries), forType: .string)
+                        Button("Clear") {
+                            logStore.clear()
+                        }
+                        .buttonStyle(.borderless)
+                        .font(.caption)
                     }
-                    .buttonStyle(.borderless)
-                    .font(.caption)
-                    Button("Clear") {
-                        logStore.clear()
-                    }
-                    .buttonStyle(.borderless)
-                    .font(.caption)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
                 }
-                .padding(.horizontal, 8)
-                .padding(.vertical, 4)
+            case .tools:
+                MCPToolsTabView(viewModel: toolsViewModel)
+                    .onAppear {
+                        if case .ready(let port) = serverState.mcpStatus {
+                            toolsViewModel.fetchTools(port: port)
+                        }
+                    }
             }
-            .tabItem { Label("Logs", systemImage: "text.rightaligned.on.text") }
 
-            // Tools sub-tab
-            MCPToolsTabView(viewModel: toolsViewModel)
-                .tabItem { Label("Tools", systemImage: "wrench.and.screwdriver") }
+            // Bottom tab bar
+            Divider()
+            Picker("", selection: $selectedSubTab) {
+                ForEach(MCPSubTab.allCases, id: \.self) { tab in
+                    switch tab {
+                    case .logs:
+                        Label("Logs", systemImage: "text.rightaligned.on.text")
+                            .tag(tab)
+                    case .tools:
+                        Label("Tools", systemImage: "wrench.and.screwdriver")
+                            .tag(tab)
+                    }
+                }
+            }
+            .pickerStyle(.segmented)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
         }
         .onChange(of: serverState.mcpStatus) { _, newStatus in
             if case .ready(let port) = newStatus {
                 toolsViewModel.fetchTools(port: port)
             }
+        }
+    }
+}
+
+// MARK: - LLM Log Tab
+
+private struct LLMLogTab: View {
+    @EnvironmentObject private var logStore: LLMLogStore
+    @EnvironmentObject private var preferences: PreferencesStore
+
+    var body: some View {
+        VStack(spacing: 0) {
+            LogPanelView(entries: logStore.entries)
+
+            Divider()
+
+            HStack {
+                Text("\(logStore.entries.count) entries")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                Spacer()
+                Button("Open Admin Panel") {
+                    let adminURL = URL(string: "http://127.0.0.1:\(preferences.llmProxyPort)")!
+                    NSWorkspace.shared.open(adminURL)
+                }
+                .buttonStyle(.borderless)
+                .font(.caption)
+                .help("Open the glitcr admin panel in your browser")
+                Button("Copy") {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(logText(logStore.entries), forType: .string)
+                }
+                .buttonStyle(.borderless)
+                .font(.caption)
+                Button("Clear") {
+                    logStore.clear()
+                }
+                .buttonStyle(.borderless)
+                .font(.caption)
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
         }
     }
 }

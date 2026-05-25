@@ -40,6 +40,11 @@ export const mcpMeta: McpToolMeta = {
         description: "Maximum time in ms to wait for generation (default: 180000)",
         default: 180000,
       },
+      closeTab: {
+        type: "boolean",
+        description: "Whether to close the tab after execution. Default: true",
+        default: true,
+      },
     },
     required: ["prompt"],
   },
@@ -92,10 +97,10 @@ export const ChatGPTWorkerTool: WorkItemTool<ChatGPTPayload, ChatGPTResult> = {
       const rpc2 = await waitForContentScript(tabId);
       const result = (await rpc2.TabRpc.executeTool("chatgpt_extract", {})) as WorkItemResult<ChatGPTResult>;
 
-      // Close tab unless debug mode
+      // Close tab unless debug mode (with 1s delay after execution)
       const shouldClose = item.options?.closeTab ?? true;
-      if (result.success && !item.debug && shouldClose) {
-        chrome.tabs.remove(tabId).catch(() => { });
+      if (result.success && !item.debug && shouldClose && tabId !== undefined) {
+        setTimeout(() => chrome.tabs.remove(tabId).catch(() => {}), 1000);
       }
 
       return result;

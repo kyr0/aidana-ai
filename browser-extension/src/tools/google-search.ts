@@ -55,6 +55,11 @@ export const mcpMeta: McpToolMeta = {
           "Whether to wait for and include Google's AI summary (default: false)",
         default: false,
       },
+      closeTab: {
+        type: "boolean",
+        description: "Whether to close the tab after execution. Default: true",
+        default: true,
+      },
     },
     required: ["query"],
   },
@@ -91,10 +96,10 @@ export const GoogleSearchWorkerTool: WorkItemTool<GoogleSearchPayload, GoogleSea
         aiSummary: item.payload.aiSummary,
       })) as WorkItemResult<GoogleSearchResult>;
 
-      // Close tab unless debug mode, closeTab is false, or the search failed
+      // Close tab unless debug mode, closeTab is false, or the search failed (with 1s delay)
       const shouldClose = item.options?.closeTab ?? true;
       if (result.success && !item.debug && shouldClose) {
-        chrome.tabs.remove(tabId).catch(() => { });
+        setTimeout(() => chrome.tabs.remove(tabId).catch(() => {}), 1000);
       }
 
       return result;

@@ -23,6 +23,10 @@ export interface ScrapePayload {
   debug?: boolean;
   /** Whether to close the tab after scraping. Default: true */
   closeTab?: boolean;
+  /** Run deduplication via LLM to remove repetitive/redundant content. Default: false */
+  dedup?: boolean;
+  /** Focus content extraction on a specific topic via LLM. Default: undefined */
+  mainTopicFocus?: string;
 }
 
 /** Full HTML of the scraped page */
@@ -33,7 +37,7 @@ export const mcpMeta: McpToolMeta = {
   workItemType: "scrape",
   name: "scrape",
   description:
-    "Open a browser tab, navigate to the given URL, wait for the page to fully load, and return the page content. Output is cleaned via Defuddle. Use format='html' for cleaned HTML, 'md' for Markdown, or 'json' for structured output with metadata.",
+    "Open a browser tab, navigate to the given URL, wait for the page to fully load, and return the page content. Output is cleaned via Defuddle. Use format='html' for cleaned HTML, 'md' for Markdown, or 'json' for structured output with metadata. Enable dedup to remove redundant content via LLM. Use mainTopicFocus to extract content focused on a specific topic.",
   inputSchema: {
     type: "object",
     properties: {
@@ -55,6 +59,15 @@ export const mcpMeta: McpToolMeta = {
         type: "boolean",
         description: "Whether to close the tab after scraping. Default: true",
         default: true,
+      },
+      dedup: {
+        type: "boolean",
+        description: "Run deduplication via LLM to remove repetitive/redundant content. Default: false",
+        default: false,
+      },
+      mainTopicFocus: {
+        type: "string",
+        description: "Focus content extraction on a specific topic via LLM. Example: 'product pricing' or 'user reviews'",
       },
     },
     required: ["url"],
@@ -85,10 +98,10 @@ export const ScrapeWorkerTool: WorkItemTool<ScrapePayload, ScrapeResult> = {
       const rpc = await waitForContentScript(tabId);
       const result = (await rpc.TabRpc.executeTool("scrape", {})) as WorkItemResult<ScrapeResult>;
 
-      // Close tab unless debug mode or closeTab is false
+      // Close tab unless debug mode or closeTab is false (with 1s delay)
       const shouldClose = item.options?.closeTab ?? true;
       if (result.success && !item.debug && shouldClose) {
-        chrome.tabs.remove(tabId).catch(() => { });
+        setTimeout(() => chrome.tabs.remove(tabId).catch(() => {}), 1000);
       }
 
       return result;

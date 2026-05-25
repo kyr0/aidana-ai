@@ -51,6 +51,11 @@ export const mcpMeta: McpToolMeta = {
         type: "string",
         description: 'City or zip code, e.g. "80999 München"',
       },
+      closeTab: {
+        type: "boolean",
+        description: "Whether to close the tab after execution. Default: true",
+        default: true,
+      },
     },
     required: ["query", "place"],
   },
@@ -92,16 +97,16 @@ export const ArztSucheWorkerTool: WorkItemTool<
 
       const shouldClose = (item.options?.closeTab ?? true) && !item.debug;
       if (shouldClose) {
-        chrome.tabs.remove(tabId).catch(() => {});
+        setTimeout(() => chrome.tabs.remove(tabId).catch(() => {}), 1000);
       }
 
       return result;
     } catch (err: unknown) {
       const error = err instanceof Error ? err : new Error(String(err));
-      // Respect closeTab option — only close on failure when explicitly allowed
+      // Respect closeTab option — only close on failure when explicitly allowed (with 1s delay)
       const shouldClose = (item.options?.closeTab ?? true) && !item.debug;
       if (shouldClose && tabId !== undefined) {
-        chrome.tabs.remove(tabId).catch(() => {});
+        setTimeout(() => chrome.tabs.remove(tabId).catch(() => {}), 1000);
       }
       return {
         success: false,

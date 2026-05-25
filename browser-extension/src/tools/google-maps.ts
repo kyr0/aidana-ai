@@ -43,6 +43,11 @@ export const mcpMeta: McpToolMeta = {
         type: "string",
         description: "Search query for Google Maps, e.g. 'restaurants in Berlin'",
       },
+      closeTab: {
+        type: "boolean",
+        description: "Whether to close the tab after execution. Default: true",
+        default: true,
+      },
     },
     required: ["query"],
   },
@@ -112,7 +117,7 @@ export const GoogleMapsWorkerTool: WorkItemTool<GoogleMapsPayload, GoogleMapsRes
 
       const shouldClose = item.options?.closeTab ?? true;
       if (result.success && !item.debug && shouldClose) {
-        chrome.tabs.remove(tabId).catch(() => {});
+        setTimeout(() => chrome.tabs.remove(tabId).catch(() => {}), 1000);
       }
 
       return result;

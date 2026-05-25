@@ -37,6 +37,11 @@ export const mcpMeta: McpToolMeta = {
         type: "string",
         description: "Natural language research query, e.g. 'Does creatine improve cognitive performance?'",
       },
+      closeTab: {
+        type: "boolean",
+        description: "Whether to close the tab after execution. Default: true",
+        default: true,
+      },
     },
     required: ["query"],
   },
@@ -91,7 +96,7 @@ export const ConsensusWorkerTool: WorkItemTool<ConsensusPayload, ConsensusResult
 
       const shouldClose = item.options?.closeTab ?? true;
       if (result.success && !item.debug && shouldClose) {
-        chrome.tabs.remove(tabId).catch(() => {});
+        setTimeout(() => chrome.tabs.remove(tabId).catch(() => {}), 1000);
       }
 
       return result;

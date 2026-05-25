@@ -14,6 +14,7 @@ final class StatusBarController {
     private let asrInfoItem = NSMenuItem(title: "ASR: Stopped", action: nil, keyEquivalent: "")
     private let ttsInfoItem = NSMenuItem(title: "TTS: Stopped", action: nil, keyEquivalent: "")
     private let mcpInfoItem = NSMenuItem(title: "MCP: Stopped", action: nil, keyEquivalent: "")
+    private let llmInfoItem = NSMenuItem(title: "LLM: Stopped", action: nil, keyEquivalent: "")
     private let logItem = NSMenuItem(title: "Log…", action: #selector(handleLogRequest), keyEquivalent: "l")
     private let preferencesItem = NSMenuItem(title: "Preferences…", action: #selector(handlePreferencesRequest), keyEquivalent: ",")
     private let quitItem = NSMenuItem(title: "Quit Aidana", action: #selector(handleQuit), keyEquivalent: "q")
@@ -45,11 +46,13 @@ final class StatusBarController {
         asrInfoItem.isEnabled = false
         ttsInfoItem.isEnabled = false
         mcpInfoItem.isEnabled = false
+        llmInfoItem.isEnabled = false
 
         menu.items = [
             asrInfoItem,
             ttsInfoItem,
             mcpInfoItem,
+            llmInfoItem,
             NSMenuItem.separator(),
             logItem,
             preferencesItem,
@@ -87,6 +90,13 @@ final class StatusBarController {
             .receive(on: RunLoop.main)
             .sink { [weak self] status in
                 self?.mcpInfoItem.title = "MCP: \(status.displayText)"
+            }
+            .store(in: &cancellables)
+
+        serverState.$llmStatus
+            .receive(on: RunLoop.main)
+            .sink { [weak self] status in
+                self?.llmInfoItem.title = "LLM: \(status.displayText)"
             }
             .store(in: &cancellables)
     }
@@ -163,4 +173,8 @@ extension Notification.Name {
     static let mcpStartRequested = Notification.Name("com.aidana.mcpStartRequested")
     static let mcpStopRequested = Notification.Name("com.aidana.mcpStopRequested")
     static let mcpRestartRequested = Notification.Name("com.aidana.mcpRestartRequested")
+    static let llmStartRequested = Notification.Name("com.aidana.llmStartRequested")
+    static let llmStopRequested = Notification.Name("com.aidana.llmStopRequested")
+    static let llmRestartRequested = Notification.Name("com.aidana.llmRestartRequested")
+    static let llmUpdateRequested = Notification.Name("com.aidana.llmUpdateRequested")
 }

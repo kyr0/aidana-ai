@@ -33,3 +33,7 @@ final class TTSLogStore: LogStore {}
 /// Separate log store type for MCP so SwiftUI can distinguish via @EnvironmentObject.
 @MainActor
 final class MCPLogStore: LogStore {}
+
+/// Separate log store type for LLM so SwiftUI can distinguish via @EnvironmentObject.
+@MainActor
+final class LLMLogStore: LogStore {}

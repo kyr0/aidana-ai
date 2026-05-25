@@ -1,4 +1,4 @@
-export type WorkItemType = "google_search" | "116117_arztsuche" | "scrape" | "download_file" | "chatgpt" | "chatgpt_send" | "chatgpt_extract" | "google_maps" | "google_maps_send" | "google_maps_extract" | "consensus" | "consensus_send" | "consensus_extract";
+export type WorkItemType = "google_search" | "116117_arztsuche" | "scrape" | "download_file" | "chatgpt" | "chatgpt_send" | "chatgpt_extract" | "google_maps" | "google_maps_send" | "google_maps_extract" | "consensus" | "consensus_send" | "consensus_extract" | "llm" | "web_search";
 
 /** Serializable error envelope (DSON-safe, no Error prototype) */
 export interface WorkItemError {
