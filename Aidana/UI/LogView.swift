@@ -655,7 +655,11 @@ private struct ChatLogTab: View {
                     .foregroundColor(.secondary)
                 Spacer()
                 Button("Open Chat") {
-                    let chatURL = URL(string: "http://127.0.0.1:\(preferences.chatPort)")!
+                    let adminUser = preferences.llmProxyAdminUser
+                    let adminPassword = preferences.llmProxyAdminPassword
+                    let encodedUser = adminUser.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? adminUser
+                    let encodedPassword = adminPassword.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? adminPassword
+                    let chatURL = URL(string: "http://127.0.0.1:\(preferences.chatPort)?username=\(encodedUser)&password=\(encodedPassword)")!
                     NSWorkspace.shared.open(chatURL)
                 }
                 .buttonStyle(.borderless)

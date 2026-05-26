@@ -842,7 +842,7 @@ private struct ChatPreferencesTab: View {
                         HStack {
                             Text("URL")
                                 .frame(width: 100, alignment: .leading)
-                            Text("http://127.0.0.1:\(preferences.chatPort)")
+                            Text("http://127.0.0.1:" + String(preferences.chatPort))
                                 .font(.system(.body, design: .monospaced))
                                 .foregroundColor(.secondary)
                         }
@@ -860,7 +860,7 @@ private struct ChatPreferencesTab: View {
                         HStack {
                             Text("Proxy URL")
                                 .frame(width: 100, alignment: .leading)
-                            Text("http://127.0.0.1:\(preferences.llmProxyPort)")
+                            Text("http://127.0.0.1:" + String(preferences.llmProxyPort))
                                 .font(.system(.body, design: .monospaced))
                                 .foregroundColor(.secondary)
                         }

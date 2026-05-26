@@ -734,8 +734,13 @@ private extension AppDelegate {
         NotificationCenter.default.publisher(for: .openChatRequested)
             .receive(on: RunLoop.main)
             .sink { [weak self] _ in
-                let port = self?.preferences.chatPort ?? 8015
-                let chatURL = URL(string: "http://127.0.0.1:\(port)")!
+                guard let self else { return }
+                let port = self.preferences.chatPort
+                let adminUser = self.preferences.llmProxyAdminUser
+                let adminPassword = self.preferences.llmProxyAdminPassword
+                let encodedUser = adminUser.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? adminUser
+                let encodedPassword = adminPassword.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? adminPassword
+                let chatURL = URL(string: "http://127.0.0.1:\(port)?username=\(encodedUser)&password=\(encodedPassword)")!
                 NSWorkspace.shared.open(chatURL)
             }
             .store(in: &cancellables)
